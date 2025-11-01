@@ -130,6 +130,10 @@ IMPORTANT: Respond with valid JSON only using this exact format:
 
 Focus action items on critical fixes only, not trivial nitpicks.
 
+IMPORTANT: End your review with a clear final assessment section like:
+---
+## Final Assessment: APPROVED / CHANGES REQUESTED / NEEDS REVISION
+
 Code to review:
 $PROMPT_PREFIX
 
