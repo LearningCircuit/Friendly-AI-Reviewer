@@ -208,14 +208,31 @@ fi
 echo "DEBUG: About to validate JSON. Content length: ${#CONTENT}" >&2
 echo "DEBUG: Content preview: ${CONTENT:0:100}..." >&2
 
+# Additional safety check: ensure CONTENT is not empty
+if [ -z "$CONTENT" ]; then
+    echo "DEBUG: CONTENT is empty, returning error JSON" >&2
+    echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: AI returned empty response","fail_pass_workflow":"uncertain","labels_added":[]}'
+    exit 0
+fi
+
 # Validate that CONTENT is valid JSON
 echo "$CONTENT" > temp_content.txt
 if ! jq . temp_content.txt >/dev/null 2>&1; then
     # If not JSON, wrap it in JSON structure
+    echo "DEBUG: Content is not valid JSON, wrapping in JSON structure" >&2
     JSON_CONTENT="{\"review\":\"## 🤖 AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
     echo "$JSON_CONTENT"
 else
-    # If already JSON, return as-is
-    echo "$CONTENT"
+    # If already JSON, validate it has the required structure
+    echo "DEBUG: Content is valid JSON, validating structure" >&2
+    if ! jq -e '.review' temp_content.txt >/dev/null 2>&1; then
+        echo "DEBUG: JSON missing required 'review' field, adding it" >&2
+        JSON_CONTENT="{\"review\":\"## 🤖 AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
+        echo "$JSON_CONTENT"
+    else
+        # If already valid JSON with required structure, return as-is
+        echo "DEBUG: JSON has required structure, returning as-is" >&2
+        echo "$CONTENT"
+    fi
 fi
 rm -f temp_content.txt
