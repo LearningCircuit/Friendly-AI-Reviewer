@@ -117,6 +117,8 @@ IMPORTANT: Respond with valid JSON only using this exact format:
   \"labels_added\": [\"bug\", \"feature\", \"enhancement\"]
 }
 
+Focus action items on critical fixes only, not trivial nitpicks.
+
 Code to review:
 $PROMPT_PREFIX
 
