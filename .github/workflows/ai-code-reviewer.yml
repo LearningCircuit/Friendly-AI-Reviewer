@@ -60,55 +60,25 @@ jobs:
             exit 1
           fi
 
-          # Parse JSON response with enhanced error handling
+          # Parse JSON response
           if ! echo "$AI_RESPONSE" | jq . >/dev/null 2>&1; then
             echo "⚠️ AI response is not valid JSON. Posting raw response for debugging."
             echo "$AI_RESPONSE" | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F -
-            echo "Raw AI response saved for debugging:"
-            echo "$AI_RESPONSE"
             exit 1
           fi
 
-          # Extract fields from JSON with additional safety checks
-          echo "Extracting fields from AI response..."
-
-          # Test the jq command with explicit error handling
-          if ! REVIEW=$(echo "$AI_RESPONSE" | jq -r '.review // "No review provided"' 2>/dev/null); then
-            echo "❌ Failed to extract review field"
-            echo "AI_RESPONSE content: $AI_RESPONSE"
-            exit 1
-          fi
-
-          if ! DECISION=$(echo "$AI_RESPONSE" | jq -r '.fail_pass_workflow // "uncertain"' 2>/dev/null); then
-            echo "❌ Failed to extract decision field"
-            echo "AI_RESPONSE content: $AI_RESPONSE"
-            exit 1
-          fi
-
-          if ! LABELS=$(echo "$AI_RESPONSE" | jq -r '.labels_added[]? // empty' 2>/dev/null); then
-            echo "⚠️ Failed to extract labels field, continuing without labels"
-            LABELS=""
-          fi
-
-          echo "✅ Successfully extracted fields from AI response"
+          # Extract fields from JSON
+          REVIEW=$(echo "$AI_RESPONSE" | jq -r '.review // "No review provided"')
+          DECISION=$(echo "$AI_RESPONSE" | jq -r '.fail_pass_workflow // "uncertain"')
+          LABELS=$(echo "$AI_RESPONSE" | jq -r '.labels_added[]? // empty')
 
           # Post the review as PR comment
           echo "$REVIEW" | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F -
 
           # Add labels to PR
-          echo "Labels to add: $LABELS"
           for label in $LABELS; do
-            echo "Adding label: $label"
-            if gh label create "$label" --color "0366d6" --description "Auto-created by AI reviewer" 2>/dev/null; then
-              echo "Created new label: $label"
-            else
-              echo "Label already exists: $label"
-            fi
-            if gh issue edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null; then
-              echo "Successfully added label: $label"
-            else
-              echo "Failed to add label: $label"
-            fi
+            gh label create "$label" --color "0366d6" --description "Auto-created by AI reviewer" 2>/dev/null || true
+            gh issue edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null || true
           done
 
           # Handle workflow decision

@@ -5,8 +5,6 @@
 
 set -e
 
-# Debug: Show script start
-echo "DEBUG: ai-reviewer.sh starting" >&2
 
 # Get API key from environment variable
 API_KEY="${OPENROUTER_API_KEY}"
@@ -46,34 +44,22 @@ fi
 
 # Fetch previous AI review comments for context (if PR_NUMBER and REPO_FULL_NAME are set)
 PREVIOUS_REVIEWS=""
-echo "DEBUG: Checking GitHub API variables" >&2
-echo "DEBUG: PR_NUMBER: '$PR_NUMBER'" >&2
-echo "DEBUG: REPO_FULL_NAME: '$REPO_FULL_NAME'" >&2
-echo "DEBUG: GITHUB_TOKEN: '$([ -n "$GITHUB_TOKEN" ] && echo "set" || echo "empty")'" >&2
-
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    echo "DEBUG: About to fetch previous reviews" >&2
     # Fetch comments that start with "## 🤖 AI Code Review"
     PREVIOUS_REVIEWS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
         --jq '.[] | select(.body | startswith("## 🤖 AI Code Review")) | "### Previous Review (" + .created_at + "):\n" + .body + "\n---\n"' 2>/dev/null | head -c 50000 || echo "")
-    echo "DEBUG: Previous reviews fetched" >&2
 fi
 
 # Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set)
 CHECK_RUNS_STATUS=""
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    echo "DEBUG: About to fetch check runs status" >&2
     # Get the head SHA of the PR
-    echo "DEBUG: Fetching head SHA" >&2
     HEAD_SHA=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" --jq '.head.sha' 2>/dev/null || echo "")
-    echo "DEBUG: Head SHA: '$HEAD_SHA'" >&2
 
     if [ -n "$HEAD_SHA" ]; then
-        echo "DEBUG: Fetching check runs" >&2
         # Fetch check runs for this commit
         CHECK_RUNS_STATUS=$(gh api "repos/$REPO_FULL_NAME/commits/$HEAD_SHA/check-runs" \
             --jq '.check_runs // [] | .[] | "- **\(.name)**: \(.status)\(if .conclusion then " (\(.conclusion))" else "" end)"' 2>/dev/null || echo "")
-        echo "DEBUG: Check runs fetched" >&2
     fi
 fi
 
@@ -115,9 +101,7 @@ Code diff to analyze:
 
 "
 
-# Create a simple text prompt instead of complex JSON
-echo "DEBUG: Creating simple text prompt" >&2
-
+# Create a simple text prompt
 # Read diff content
 DIFF_CONTENT=$(cat "$DIFF_FILE")
 
@@ -138,7 +122,6 @@ $PROMPT_PREFIX
 
 $DIFF_CONTENT"
 
-echo "DEBUG: Prompt created, length: ${#PROMPT}" >&2
 
 # Clean up diff file
 rm -f "$DIFF_FILE"
@@ -162,12 +145,6 @@ RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
       \"max_tokens\": $AI_MAX_TOKENS
     }")
 
-# Debug: Save API response for troubleshooting
-echo "DEBUG: API Response:" >&2
-echo "$RESPONSE" >&2
-echo "DEBUG: End API Response" >&2
-
-
 # Check if API call was successful
 if [ -z "$RESPONSE" ]; then
     echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: API call failed - no response received","fail_pass_workflow":"uncertain","labels_added":[]}'
@@ -179,11 +156,6 @@ if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
     echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: Invalid JSON response from API","fail_pass_workflow":"uncertain","labels_added":[]}'
     exit 1
 fi
-
-# Debug: Output raw API response
-echo "DEBUG: Raw API response:" >&2
-echo "$RESPONSE" >&2
-echo "DEBUG: End raw API response" >&2
 
 # Extract the content
 CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "error"')
@@ -207,35 +179,24 @@ if [ "$CONTENT" = "error" ]; then
     exit 1
 fi
 
-# Debug: Show content before validation
-echo "DEBUG: About to validate JSON. Content length: ${#CONTENT}" >&2
-echo "DEBUG: Content preview: ${CONTENT:0:100}..." >&2
-
-# Additional safety check: ensure CONTENT is not empty
+# Ensure CONTENT is not empty
 if [ -z "$CONTENT" ]; then
-    echo "DEBUG: CONTENT is empty, returning error JSON" >&2
     echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: AI returned empty response","fail_pass_workflow":"uncertain","labels_added":[]}'
     exit 0
 fi
 
 # Validate that CONTENT is valid JSON
-echo "$CONTENT" > temp_content.txt
-if ! jq . temp_content.txt >/dev/null 2>&1; then
+if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
     # If not JSON, wrap it in JSON structure
-    echo "DEBUG: Content is not valid JSON, wrapping in JSON structure" >&2
     JSON_CONTENT="{\"review\":\"## 🤖 AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
     echo "$JSON_CONTENT"
 else
     # If already JSON, validate it has the required structure
-    echo "DEBUG: Content is valid JSON, validating structure" >&2
-    if ! jq -e '.review' temp_content.txt >/dev/null 2>&1; then
-        echo "DEBUG: JSON missing required 'review' field, adding it" >&2
+    if ! echo "$CONTENT" | jq -e '.review' >/dev/null 2>&1; then
         JSON_CONTENT="{\"review\":\"## 🤖 AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
         echo "$JSON_CONTENT"
     else
         # If already valid JSON with required structure, return as-is
-        echo "DEBUG: JSON has required structure, returning as-is" >&2
         echo "$CONTENT"
     fi
 fi
-rm -f temp_content.txt
