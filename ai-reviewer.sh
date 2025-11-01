@@ -46,22 +46,34 @@ fi
 
 # Fetch previous AI review comments for context (if PR_NUMBER and REPO_FULL_NAME are set)
 PREVIOUS_REVIEWS=""
+echo "DEBUG: Checking GitHub API variables" >&2
+echo "DEBUG: PR_NUMBER: '$PR_NUMBER'" >&2
+echo "DEBUG: REPO_FULL_NAME: '$REPO_FULL_NAME'" >&2
+echo "DEBUG: GITHUB_TOKEN: '$([ -n "$GITHUB_TOKEN" ] && echo "set" || echo "empty")'" >&2
+
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+    echo "DEBUG: About to fetch previous reviews" >&2
     # Fetch comments that start with "## 🤖 AI Code Review"
     PREVIOUS_REVIEWS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
         --jq '.[] | select(.body | startswith("## 🤖 AI Code Review")) | "### Previous Review (" + .created_at + "):\n" + .body + "\n---\n"' 2>/dev/null | head -c 50000 || echo "")
+    echo "DEBUG: Previous reviews fetched" >&2
 fi
 
 # Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set)
 CHECK_RUNS_STATUS=""
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+    echo "DEBUG: About to fetch check runs status" >&2
     # Get the head SHA of the PR
+    echo "DEBUG: Fetching head SHA" >&2
     HEAD_SHA=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" --jq '.head.sha' 2>/dev/null || echo "")
+    echo "DEBUG: Head SHA: '$HEAD_SHA'" >&2
 
     if [ -n "$HEAD_SHA" ]; then
+        echo "DEBUG: Fetching check runs" >&2
         # Fetch check runs for this commit
         CHECK_RUNS_STATUS=$(gh api "repos/$REPO_FULL_NAME/commits/$HEAD_SHA/check-runs" \
             --jq '.check_runs[] | "- **\(.name)**: \(.status)\(if .conclusion then " (\(.conclusion))" else "" end)"' 2>/dev/null || echo "")
+        echo "DEBUG: Check runs fetched" >&2
     fi
 fi
 
@@ -181,6 +193,11 @@ if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
     echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: Invalid JSON response from API","fail_pass_workflow":"uncertain","labels_added":[]}'
     exit 1
 fi
+
+# Debug: Output raw API response
+echo "DEBUG: Raw API response:" >&2
+echo "$RESPONSE" >&2
+echo "DEBUG: End raw API response" >&2
 
 # Extract the content
 CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "error"')
