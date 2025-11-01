@@ -90,6 +90,9 @@ jobs:
 
           echo "✅ AI review completed successfully"
 
+          # Remove the ai_code_review label to prevent duplicate executions
+          gh label remove "ai_code_review" ${{ github.event.pull_request.number }} 2>/dev/null || true
+
       - name: Cleanup
         if: always()
         run: |
