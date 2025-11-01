@@ -141,6 +141,9 @@ cat > request.json << EOF
 EOF
 
 echo "DEBUG: JSON request created successfully" >&2
+echo "DEBUG: Request JSON content:" >&2
+cat request.json >&2
+echo "DEBUG: End request JSON content" >&2
 
 # Clean up diff file
 rm -f "$DIFF_FILE"
