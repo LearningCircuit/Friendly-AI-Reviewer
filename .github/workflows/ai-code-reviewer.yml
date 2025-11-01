@@ -40,15 +40,75 @@ jobs:
           MAX_DIFF_SIZE: 800000
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO_FULL_NAME: ${{ github.repository }}
+          FAIL_ON_REQUESTED_CHANGES: ${{ vars.FAIL_ON_REQUESTED_CHANGES || 'false' }}
         run: |
-          # Run the AI reviewer and post the comment directly via stdin
-          # If the script fails, the error message will be posted as a comment
-          cat diff.txt | bash ai-reviewer.sh | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F - || {
-            echo "⚠️ AI Code Review failed. Check the workflow logs for details."
+          # Run the AI reviewer and save response to file
+          echo "Running AI code review..."
+          AI_RESPONSE=$(cat diff.txt | bash ai-reviewer.sh)
+
+          # Debug: Show what AI returned
+          echo "=== AI RESPONSE START ==="
+          echo "$AI_RESPONSE"
+          echo "=== AI RESPONSE END ==="
+
+          # Save response for debugging
+          echo "$AI_RESPONSE" > ai_response.txt
+
+          # Check if AI_RESPONSE is empty
+          if [ -z "$AI_RESPONSE" ]; then
+            echo "❌ AI response is empty"
             exit 1
-          }
+          fi
+
+          # Parse JSON response
+          if ! echo "$AI_RESPONSE" | jq . >/dev/null 2>&1; then
+            echo "⚠️ AI response is not valid JSON. Posting raw response for debugging."
+            echo "$AI_RESPONSE" | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F -
+            exit 1
+          fi
+
+          # Extract fields from JSON
+          REVIEW=$(echo "$AI_RESPONSE" | jq -r '.review // "No review provided"')
+          DECISION=$(echo "$AI_RESPONSE" | jq -r '.fail_pass_workflow // "uncertain"')
+          LABELS=$(echo "$AI_RESPONSE" | jq -r '.labels_added[]? // empty')
+
+          # Post the review as PR comment
+          echo "$REVIEW" | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F -
+
+          # Add labels to PR
+          echo "Labels to add: $LABELS"
+          for label in $LABELS; do
+            echo "Adding label: $label"
+            if gh label create "$label" --color "0366d6" --description "Auto-created by AI reviewer" 2>/dev/null; then
+              echo "Created new label: $label"
+            else
+              echo "Label already exists: $label"
+            fi
+            if gh issue edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null; then
+              echo "Successfully added label: $label"
+            else
+              echo "Failed to add label: $label"
+            fi
+          done
+
+          # Handle workflow decision
+          echo "AI decision: $DECISION"
+          if [ "$FAIL_ON_REQUESTED_CHANGES" = "true" ] && [ "$DECISION" = "fail" ]; then
+            echo "❌ AI requested changes and FAIL_ON_REQUESTED_CHANGES is enabled. Failing workflow."
+            exit 1
+          fi
+
+          echo "✅ AI review completed successfully"
+
+          # Remove the ai_code_review label to make re-triggering easier
+          echo "Removing ai_code_review label to allow easy re-triggering"
+          if gh issue edit ${{ github.event.pull_request.number }} --remove-label "ai_code_review" 2>/dev/null; then
+            echo "Successfully removed ai_code_review label"
+          else
+            echo "Failed to remove ai_code_review label (may have been already removed)"
+          fi
 
       - name: Cleanup
         if: always()
         run: |
-          rm -f diff.txt
+          rm -f diff.txt ai_response.txt
