@@ -96,10 +96,19 @@ jobs:
           echo "$REVIEW" | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F -
 
           # Add labels to PR
+          echo "Labels to add: $LABELS"
           for label in $LABELS; do
             echo "Adding label: $label"
-            gh label create "$label" --color "0366d6" --description "Auto-created by AI reviewer" 2>/dev/null || true
-            gh label "$label" --add ${{ github.event.pull_request.number }} 2>/dev/null || true
+            if gh label create "$label" --color "0366d6" --description "Auto-created by AI reviewer" 2>/dev/null; then
+              echo "Created new label: $label"
+            else
+              echo "Label already exists: $label"
+            fi
+            if gh label "$label" --add ${{ github.event.pull_request.number }} 2>/dev/null; then
+              echo "Successfully added label: $label"
+            else
+              echo "Failed to add label: $label"
+            fi
           done
 
           # Handle workflow decision
