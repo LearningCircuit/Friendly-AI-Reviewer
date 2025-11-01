@@ -115,55 +115,58 @@ Code diff to analyze:
 
 "
 
-# Create the request JSON using a simpler approach
-echo "DEBUG: Creating JSON request using simple approach" >&2
+# Create a simple text prompt instead of complex JSON
+echo "DEBUG: Creating simple text prompt" >&2
 
 # Read diff content
 DIFF_CONTENT=$(cat "$DIFF_FILE")
 
-# Create a simple JSON request using cat and heredoc
-cat > request.json << EOF
-{
-  "model": "$AI_MODEL",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a helpful code reviewer analyzing pull requests. Provide a comprehensive review covering security, performance, code quality, and best practices.\\n\\nIMPORTANT: Respond with valid JSON only. No other text before or after the JSON.\\n\\nUse this exact structure:\\n{\\n  \"review\": \"Human-readable review content with markdown formatting. Include detailed analysis, action items checklist, and clear recommendation.\",\\n  \"fail_pass_workflow\": \"pass\",\\n  \"labels_added\": [\"bug\", \"security\", \"performance\"]\\n}\\n\\nGuidelines:\\n- 'review' field: Detailed review in markdown format covering important issues only (ignore trivial nitpicks). Include action items checklist and clear recommendation with ✅ **Approve**, 🔄 **Request Changes**, or ❓ **Uncertain**.\\n- 'fail_pass_workflow' field: Use \"pass\" for ✅ **Approve**, \"fail\" for 🔄 **Request Changes**, \"uncertain\" for ❓ **Uncertain**\\n- 'labels_added' field: Array of standard GitHub labels describing the PR type. Common labels: bug, feature, enhancement, documentation, refactor, performance, security, test, ci, dependencies. Add other relevant labels as needed.\\n\\nRespond with valid JSON only."
-    },
-    {
-      "role": "user",
-      "content": "$PROMPT_PREFIX\\n\\n$DIFF_CONTENT"
-    }
-  ],
-  "temperature": $AI_TEMPERATURE,
-  "max_tokens": $AI_MAX_TOKENS
-}
-EOF
+# Simple text prompt
+PROMPT="Please analyze this code diff and provide a comprehensive review.
 
-echo "DEBUG: JSON request created successfully" >&2
-echo "DEBUG: Request JSON content:" >&2
-cat request.json >&2
-echo "DEBUG: End request JSON content" >&2
+Focus on security, performance, code quality, and best practices.
+
+IMPORTANT: Respond with valid JSON only using this exact format:
+{
+  \"review\": \"Detailed review in markdown format\",
+  \"fail_pass_workflow\": \"pass\",
+  \"labels_added\": [\"bug\", \"feature\", \"enhancement\"]
+}
+
+Code to review:
+$PROMPT_PREFIX
+
+$DIFF_CONTENT"
+
+echo "DEBUG: Prompt created, length: ${#PROMPT}" >&2
 
 # Clean up diff file
 rm -f "$DIFF_FILE"
 
-# Make API call to OpenRouter
+# Make API call to OpenRouter with simple JSON
 # Use generic or repo-specific referer
 REFERER_URL="https://github.com/${REPO_FULL_NAME:-unknown/repo}"
 RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $API_KEY" \
     -H "HTTP-Referer: $REFERER_URL" \
-    -d @request.json)
+    -d "{
+      \"model\": \"$AI_MODEL\",
+      \"messages\": [
+        {
+          \"role\": \"user\",
+          \"content\": $(echo "$PROMPT" | jq -Rs .)
+        }
+      ],
+      \"temperature\": $AI_TEMPERATURE,
+      \"max_tokens\": $AI_MAX_TOKENS
+    }")
 
 # Debug: Save API response for troubleshooting
 echo "DEBUG: API Response:" >&2
 echo "$RESPONSE" >&2
 echo "DEBUG: End API Response" >&2
 
-# Clean up temporary file
-rm -f request.json
 
 # Check if API call was successful
 if [ -z "$RESPONSE" ]; then
