@@ -115,52 +115,32 @@ Code diff to analyze:
 
 "
 
-# Create the request JSON by combining parts
-jq -n \
-  --arg model "$AI_MODEL" \
-  --argjson temperature "$AI_TEMPERATURE" \
-  --argjson max_tokens "$AI_MAX_TOKENS" \
-  --arg system_content "You are a helpful code reviewer analyzing pull requests. Provide a comprehensive review covering security, performance, code quality, and best practices.
+# Create the request JSON using a simpler approach
+echo "DEBUG: Creating JSON request using simple approach" >&2
 
-IMPORTANT: Respond with valid JSON only. No other text before or after the JSON.
+# Read diff content
+DIFF_CONTENT=$(cat "$DIFF_FILE")
 
-Use this exact structure:
+# Create a simple JSON request using cat and heredoc
+cat > request.json << EOF
 {
-  "review": "Human-readable review content with markdown formatting. Include detailed analysis, action items checklist, and clear recommendation.",
-  "fail_pass_workflow": "pass",
-  "labels_added": ["bug", "security", "performance"]
+  "model": "$AI_MODEL",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful code reviewer analyzing pull requests. Provide a comprehensive review covering security, performance, code quality, and best practices.\\n\\nIMPORTANT: Respond with valid JSON only. No other text before or after the JSON.\\n\\nUse this exact structure:\\n{\\n  \"review\": \"Human-readable review content with markdown formatting. Include detailed analysis, action items checklist, and clear recommendation.\",\\n  \"fail_pass_workflow\": \"pass\",\\n  \"labels_added\": [\"bug\", \"security\", \"performance\"]\\n}\\n\\nGuidelines:\\n- 'review' field: Detailed review in markdown format covering important issues only (ignore trivial nitpicks). Include action items checklist and clear recommendation with ✅ **Approve**, 🔄 **Request Changes**, or ❓ **Uncertain**.\\n- 'fail_pass_workflow' field: Use \"pass\" for ✅ **Approve**, \"fail\" for 🔄 **Request Changes**, \"uncertain\" for ❓ **Uncertain**\\n- 'labels_added' field: Array of standard GitHub labels describing the PR type. Common labels: bug, feature, enhancement, documentation, refactor, performance, security, test, ci, dependencies. Add other relevant labels as needed.\\n\\nRespond with valid JSON only."
+    },
+    {
+      "role": "user",
+      "content": "$PROMPT_PREFIX\\n\\n$DIFF_CONTENT"
+    }
+  ],
+  "temperature": $AI_TEMPERATURE,
+  "max_tokens": $AI_MAX_TOKENS
 }
+EOF
 
-Guidelines:
-- 'review' field: Detailed review in markdown format covering important issues only (ignore trivial nitpicks). Include action items checklist and clear recommendation with ✅ **Approve**, 🔄 **Request Changes**, or ❓ **Uncertain**.
-- 'fail_pass_workflow' field: Use "pass" for ✅ **Approve**, "fail" for 🔄 **Request Changes**, "uncertain" for ❓ **Uncertain**
-- 'labels_added' field: Array of standard GitHub labels describing the PR type. Common labels: bug, feature, enhancement, documentation, refactor, performance, security, test, ci, dependencies. Add other relevant labels as needed.
-
-Example:
-{
-  "review": "## 🤖 AI Code Review\n\n### Security Analysis\nFound potential SQL injection vulnerability.\n\n### Performance Review\nDatabase query needs optimization.\n\n## Action Items Checklist\n- [ ] Fix SQL injection vulnerability\n- [ ] Add database index\n\n## Recommendation\n🔄 **Request Changes**",
-  "fail_pass_workflow": "fail",
-  "labels_added": ["security", "performance", "bug"]
-}
-
-Respond with valid JSON only." \
-  --arg prompt_prefix "$PROMPT_PREFIX" \
-  --rawfile diff_content "$DIFF_FILE" \
-  '{
-    "model": $model,
-    "messages": [
-      {
-        "role": "system",
-        "content": $system_content
-      },
-      {
-        "role": "user",
-        "content": ($prompt_prefix + $diff_content)
-      }
-    ],
-    "temperature": $temperature,
-    "max_tokens": $max_tokens
-  }' > request.json
+echo "DEBUG: JSON request created successfully" >&2
 
 # Clean up diff file
 rm -f "$DIFF_FILE"
