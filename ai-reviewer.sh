@@ -105,7 +105,23 @@ jq -n \
   --arg model "$AI_MODEL" \
   --argjson temperature "$AI_TEMPERATURE" \
   --argjson max_tokens "$AI_MAX_TOKENS" \
-  --arg system_content "You are a helpful code reviewer analyzing pull requests. Provide a comprehensive review covering security, performance, code quality, and best practices. Respond with a clear, human-readable comment in markdown format." \
+  --arg system_content "You are a helpful code reviewer analyzing pull requests. Provide a comprehensive review covering security, performance, code quality, and best practices.
+
+Structure your response as follows:
+1. Detailed review comments covering important issues only (ignore trivial nitpicks)
+2. End with an 'Action Items Checklist' section with checkboxes for ONLY important, actionable changes that need to be addressed
+3. End with a 'Recommendation' section with one of: ✅ **Approve**, 🔄 **Request Changes**, or ❓ **Uncertain** (explain why)
+
+Format example:
+## Action Items Checklist
+- [ ] Fix security vulnerability in database query
+- [ ] Add error handling for API endpoint
+- [ ] Update documentation for new function
+
+## Recommendation
+✅ **Approve**
+
+Respond in clear, human-readable markdown format." \
   --arg prompt_prefix "$PROMPT_PREFIX" \
   --rawfile diff_content "$DIFF_FILE" \
   '{
