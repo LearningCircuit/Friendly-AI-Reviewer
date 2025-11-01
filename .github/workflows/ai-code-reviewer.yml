@@ -46,12 +46,23 @@ jobs:
           echo "Running AI code review..."
           AI_RESPONSE=$(cat diff.txt | bash ai-reviewer.sh)
 
+          # Debug: Show what AI returned
+          echo "=== AI RESPONSE START ==="
+          echo "$AI_RESPONSE"
+          echo "=== AI RESPONSE END ==="
+
           # Save response for debugging
           echo "$AI_RESPONSE" > ai_response.txt
 
+          # Check if AI_RESPONSE is empty
+          if [ -z "$AI_RESPONSE" ]; then
+            echo "❌ AI response is empty"
+            exit 1
+          fi
+
           # Parse JSON response
           if ! echo "$AI_RESPONSE" | jq . >/dev/null 2>&1; then
-            echo "⚠️ AI response is not valid JSON. Posting raw response."
+            echo "⚠️ AI response is not valid JSON. Posting raw response for debugging."
             echo "$AI_RESPONSE" | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F -
             exit 1
           fi
