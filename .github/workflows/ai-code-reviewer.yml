@@ -76,9 +76,19 @@ jobs:
           echo "$REVIEW" | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F -
 
           # Add labels to PR
+          echo "Labels to add: $LABELS"
           for label in $LABELS; do
-            gh label create "$label" --color "0366d6" --description "Auto-created by AI reviewer" 2>/dev/null || true
-            gh issue edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null || true
+            echo "Adding label: $label"
+            if gh label create "$label" --color "0366d6" --description "Auto-created by AI reviewer" 2>/dev/null; then
+              echo "Created new label: $label"
+            else
+              echo "Label already exists: $label"
+            fi
+            if gh issue edit ${{ github.event.pull_request.number }} --add-label "$label" 2>/dev/null; then
+              echo "Successfully added label: $label"
+            else
+              echo "Failed to add label: $label"
+            fi
           done
 
           # Handle workflow decision
@@ -90,8 +100,13 @@ jobs:
 
           echo "✅ AI review completed successfully"
 
-          # Remove the ai_code_review label to prevent duplicate executions
-          gh label remove "ai_code_review" ${{ github.event.pull_request.number }} 2>/dev/null || true
+          # Remove the ai_code_review label to make re-triggering easier
+          echo "Removing ai_code_review label to allow easy re-triggering"
+          if gh label remove "ai_code_review" ${{ github.event.pull_request.number }} 2>/dev/null; then
+            echo "Successfully removed ai_code_review label"
+          else
+            echo "Failed to remove ai_code_review label (may have been already removed)"
+          fi
 
       - name: Cleanup
         if: always()
