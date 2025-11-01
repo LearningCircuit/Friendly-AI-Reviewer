@@ -159,14 +159,23 @@ RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
     -H "HTTP-Referer: $REFERER_URL" \
     -d @request.json)
 
+# Debug: Save API response for troubleshooting
+echo "DEBUG: API Response:" >&2
+echo "$RESPONSE" >&2
+echo "DEBUG: End API Response" >&2
+
 # Clean up temporary file
 rm -f request.json
 
 # Check if API call was successful
 if [ -z "$RESPONSE" ]; then
-    echo "## 🤖 AI Code Review
+    echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: API call failed - no response received","fail_pass_workflow":"uncertain","labels_added":[]}'
+    exit 1
+fi
 
-❌ **Error**: API call failed - no response received"
+# Check if response is valid JSON
+if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
+    echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: Invalid JSON response from API","fail_pass_workflow":"uncertain","labels_added":[]}'
     exit 1
 fi
 
@@ -178,23 +187,26 @@ if [ "$CONTENT" = "error" ]; then
     ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // "Invalid API response format"')
     ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""')
 
-    echo "## 🤖 AI Code Review
-
-❌ **Error**: $ERROR_MSG"
-
+    # Return error as JSON
+    ERROR_CONTENT="## 🤖 AI Code Review\n\n❌ **Error**: $ERROR_MSG"
     if [ -n "$ERROR_CODE" ]; then
-        echo "Error code: \`$ERROR_CODE\`"
+        ERROR_CONTENT="$ERROR_CONTENT\n\nError code: \`$ERROR_CODE\`"
     fi
+    ERROR_CONTENT="$ERROR_CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*"
+
+    echo "{\"review\":\"$ERROR_CONTENT\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
 
     # Log full response for debugging (will appear in GitHub Actions logs)
     echo "Full API response: $RESPONSE" >&2
     exit 1
 fi
 
-# Output the review directly as a comment
-echo "## 🤖 AI Code Review
-
-$CONTENT
-
----
-*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*"
+# Validate that CONTENT is valid JSON
+if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
+    # If not JSON, wrap it in JSON structure
+    JSON_CONTENT="{\"review\":\"## 🤖 AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
+    echo "$JSON_CONTENT"
+else
+    # If already JSON, return as-is
+    echo "$CONTENT"
+fi
