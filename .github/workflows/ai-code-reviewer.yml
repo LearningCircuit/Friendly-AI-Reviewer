@@ -102,7 +102,7 @@ jobs:
 
           # Remove the ai_code_review label to make re-triggering easier
           echo "Removing ai_code_review label to allow easy re-triggering"
-          if gh label remove "ai_code_review" ${{ github.event.pull_request.number }} 2>/dev/null; then
+          if gh issue edit ${{ github.event.pull_request.number }} --remove-label "ai_code_review" 2>/dev/null; then
             echo "Successfully removed ai_code_review label"
           else
             echo "Failed to remove ai_code_review label (may have been already removed)"
