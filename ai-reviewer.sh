@@ -21,6 +21,7 @@ AI_MODEL="${AI_MODEL:-z-ai/glm-4.6}"
 AI_TEMPERATURE="${AI_TEMPERATURE:-0.1}"
 AI_MAX_TOKENS="${AI_MAX_TOKENS:-2000}"
 MAX_DIFF_SIZE="${MAX_DIFF_SIZE:-800000}"  # 800KB default limit (~200K tokens, matching model context size)
+EXCLUDE_FILE_PATTERNS="${EXCLUDE_FILE_PATTERNS:-*.lock,*.min.js,*.min.css,package-lock.json,yarn.lock}"
 
 # Read diff content from stdin
 DIFF_CONTENT=$(cat)
@@ -30,6 +31,16 @@ if [ -z "$DIFF_CONTENT" ]; then
 
 ❌ **Error**: No diff content to analyze"
     exit 1
+fi
+
+# Simple exclude file patterns filter
+if [ -n "$EXCLUDE_FILE_PATTERNS" ]; then
+    FILTERED_DIFF=$(mktemp)
+    echo "$DIFF_CONTENT" | grep -v -E "diff --git a/($(echo "$EXCLUDE_FILE_PATTERNS" | sed 's/,/|/g' | sed 's/\*/\\*/g')) b/" > "$FILTERED_DIFF" 2>/dev/null || true
+    if [ -s "$FILTERED_DIFF" ]; then
+        DIFF_CONTENT=$(cat "$FILTERED_DIFF")
+    fi
+    rm -f "$FILTERED_DIFF"
 fi
 
 # Validate diff size to prevent excessive API usage
@@ -119,6 +130,10 @@ IMPORTANT: Respond with valid JSON only using this exact format:
 
 Focus action items on critical fixes only, not trivial nitpicks.
 
+IMPORTANT: End your review with a clear final assessment section like:
+---
+## Final Assessment: APPROVED / CHANGES REQUESTED / NEEDS REVISION
+
 Code to review:
 $PROMPT_PREFIX
 
@@ -176,8 +191,11 @@ if [ "$CONTENT" = "error" ]; then
 
     echo "{\"review\":\"$ERROR_CONTENT\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
 
-    # Log full response for debugging (will appear in GitHub Actions logs)
-    echo "Full API response: $RESPONSE" >&2
+    # Don't log full response as it may contain sensitive API data
+    # Only log error code for debugging
+    if [ -n "$ERROR_CODE" ]; then
+        echo "API Error code: $ERROR_CODE" >&2
+    fi
     exit 1
 fi
 
