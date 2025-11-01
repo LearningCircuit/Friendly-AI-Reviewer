@@ -5,6 +5,9 @@
 
 set -e
 
+# Debug: Show script start
+echo "DEBUG: ai-reviewer.sh starting" >&2
+
 # Get API key from environment variable
 API_KEY="${OPENROUTER_API_KEY}"
 
@@ -201,8 +204,13 @@ if [ "$CONTENT" = "error" ]; then
     exit 1
 fi
 
+# Debug: Show content before validation
+echo "DEBUG: About to validate JSON. Content length: ${#CONTENT}" >&2
+echo "DEBUG: Content preview: ${CONTENT:0:100}..." >&2
+
 # Validate that CONTENT is valid JSON
-if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
+echo "$CONTENT" > temp_content.txt
+if ! jq . temp_content.txt >/dev/null 2>&1; then
     # If not JSON, wrap it in JSON structure
     JSON_CONTENT="{\"review\":\"## 🤖 AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
     echo "$JSON_CONTENT"
@@ -210,3 +218,4 @@ else
     # If already JSON, return as-is
     echo "$CONTENT"
 fi
+rm -f temp_content.txt
