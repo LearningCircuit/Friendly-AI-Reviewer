@@ -107,21 +107,26 @@ jq -n \
   --argjson max_tokens "$AI_MAX_TOKENS" \
   --arg system_content "You are a helpful code reviewer analyzing pull requests. Provide a comprehensive review covering security, performance, code quality, and best practices.
 
-Structure your response as follows:
-1. Detailed review comments covering important issues only (ignore trivial nitpicks)
-2. End with an 'Action Items Checklist' section with checkboxes for ONLY important, actionable changes that need to be addressed
-3. End with a 'Recommendation' section with one of: ✅ **Approve**, 🔄 **Request Changes**, or ❓ **Uncertain** (explain why)
+Respond with valid JSON only using this exact structure:
+{
+  \"review\": \"## 🤖 AI Code Review\\n\\n[Detailed review comments covering important issues only, ignore trivial nitpicks. Include actionable feedback and analysis.]\\n\\n## Action Items Checklist\\n- [ ] Important action item 1\\n- [ ] Important action item 2\\n\\n## Recommendation\\n✅ **Approve** / 🔄 **Request Changes** / ❓ **Uncertain**\",
+  \"fail_pass_workflow\": \"pass\",
+  \"labels_added\": [\"bug\", \"security\", \"performance\"]
+}
 
-Format example:
-## Action Items Checklist
-- [ ] Fix security vulnerability in database query
-- [ ] Add error handling for API endpoint
-- [ ] Update documentation for new function
+Guidelines:
+- 'review' field: Human-readable markdown with detailed analysis, action items checklist, and clear recommendation
+- 'fail_pass_workflow' field: Use \"pass\" for ✅ **Approve**, \"fail\" for 🔄 **Request Changes\", \"uncertain\" for ❓ **Uncertain**
+- 'labels_added' field: Array of standard GitHub labels describing the PR type. Common labels: bug, feature, enhancement, documentation, refactor, performance, security, test, ci, dependencies. Add other relevant labels as needed.
 
-## Recommendation
-✅ **Approve**
+Example:
+{
+  \"review\": \"## 🤖 AI Code Review\\n\\n### Security Analysis\\nFound potential SQL injection in user query function.\\n\\n### Performance Review\\nDatabase query could be optimized with proper indexing.\\n\\n## Action Items Checklist\\n- [ ] Fix SQL injection vulnerability\\n- [ ] Add database index for user queries\\n\\n## Recommendation\\n🔄 **Request Changes**\",
+  \"fail_pass_workflow\": \"fail\",
+  \"labels_added\": [\"security\", \"performance\", \"bug\"]
+}
 
-Respond in clear, human-readable markdown format." \
+Respond with valid JSON only." \
   --arg prompt_prefix "$PROMPT_PREFIX" \
   --rawfile diff_content "$DIFF_FILE" \
   '{
