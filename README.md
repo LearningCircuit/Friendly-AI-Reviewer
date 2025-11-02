@@ -15,7 +15,14 @@ The AI Code Reviewer provides automated, comprehensive code reviews covering:
 - **Code Quality** 🎨 - Readability, maintainability, error handling, naming conventions
 - **Best Practices** 📋 - Coding standards, proper patterns, type safety, dead code
 
-The review is posted as a single comprehensive comment on your pull request.
+### Smart Label Integration 🏷️
+The AI reviewer automatically fetches existing repository labels and provides them to the LLM for context:
+- **Prefers existing labels** over creating new ones
+- **Maintains labeling consistency** across pull requests
+- **Reduces label clutter** by avoiding duplicates
+- **Preserves repository conventions** for better organization
+
+The review is posted as a single comprehensive comment on your pull request with appropriate labels automatically added.
 
 ## Setup Instructions
 
@@ -113,10 +120,43 @@ If you get a "Diff is too large" error:
 
 ## Security Considerations
 
+### ⚠️ **Important Privacy Notice for Private Repositories**
+
+**This system sends the following data to external AI services:**
+- **Complete code diffs** from your pull requests
+- **Repository labels** (names, descriptions, colors)
+- **GitHub Actions status** and previous AI review comments
+- **Repository metadata** (name, PR numbers, etc.)
+
+**For Private Repositories:**
+- Your **proprietary code will be sent to OpenRouter/AI providers**
+- Review the **data retention policies** of your chosen AI provider
+- Consider whether this complies with your **company's security policies**
+- Some organizations may require **self-hosted AI models** instead
+
+### Data Flow Details
+
+The workflow fetches and sends these repository elements to the AI:
+1. **Code Changes**: Full diff of modified files
+2. **Labels**: All repository labels with descriptions and colors
+3. **Previous Comments**: All previous AI review comments from the PR
+4. **CI/CD Status**: GitHub Actions check runs and build statuses
+5. **PR Metadata**: Pull request details, head SHA, repository information
+6. **Files**: May include sensitive configuration files, keys, or credentials
+
+### Recommended Mitigations
+
+- **Review AI Provider Policies**: Check OpenRouter/data processor privacy policies
+- **Use Environment Variables**: Ensure sensitive configs are excluded from diffs
+- **Consider Self-Hosted**: For highly sensitive code, use local AI models
+- **Team Approval**: Get security team approval for private repository use
+- **Audit Trail**: Monitor which PRs trigger AI reviews
+
+### General Security
+
 - API keys are stored securely in GitHub Secrets and passed via environment variables
 - Reviews only run when the `ai_code_review` label is manually added
 - All API calls are made through secure HTTPS connections
-- Code diffs are sent to OpenRouter/AI provider - review their data policies
 - The workflow has minimal permissions (read contents, write PR comments)
 
 ## Support
