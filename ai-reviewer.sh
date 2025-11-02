@@ -78,8 +78,16 @@ fi
 AVAILABLE_LABELS=""
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     # Fetch all labels from the repository
+    echo "🔍 Fetching available labels from repository..."
     AVAILABLE_LABELS=$(gh api "repos/$REPO_FULL_NAME/labels" --paginate 2>/dev/null \
         --jq '.[] | "- **\(.name)**: \(.description // "No description") (color: #\(.color))"' || echo "")
+
+    if [ -n "$AVAILABLE_LABELS" ]; then
+        LABEL_COUNT=$(echo "$AVAILABLE_LABELS" | wc -l)
+        echo "✅ Successfully fetched $LABEL_COUNT labels from repository"
+    else
+        echo "ℹ️  No existing labels found in repository or API call failed"
+    fi
 fi
 
 # Create the JSON request with proper escaping using jq
