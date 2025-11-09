@@ -134,7 +134,7 @@ jobs:
           echo "The review has been posted above. Please address the requested changes."
           exit 1
 
-        - name: Cleanup
+      - name: Cleanup
         if: always()
         run: |
           rm -f diff.txt
