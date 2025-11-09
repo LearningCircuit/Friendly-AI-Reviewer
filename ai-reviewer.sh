@@ -5,12 +5,21 @@
 
 set -e
 
+# Constants
+REVIEW_HEADER="## ❤️ AI Code Review"
+REVIEW_FOOTER="---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*"
+
+# Helper function to generate error response JSON
+generate_error_response() {
+    local error_msg="$1"
+    echo "{\"review\":\"$REVIEW_HEADER\n\n❌ **Error**: $error_msg\n\n$REVIEW_FOOTER\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
+}
 
 # Get API key from environment variable
 API_KEY="${OPENROUTER_API_KEY}"
 
 if [ -z "$API_KEY" ]; then
-    echo "## ❤️ AI Code Review
+    echo "$REVIEW_HEADER
 
 ❌ **Error**: Missing OPENROUTER_API_KEY environment variable"
     exit 1
@@ -19,6 +28,7 @@ fi
 # Configuration with defaults
 AI_MODEL="${AI_MODEL:-moonshotai/kimi-k2-thinking}"
 AI_TEMPERATURE="${AI_TEMPERATURE:-0.1}"
+AI_MAX_TOKENS="${AI_MAX_TOKENS:-6000}"
 MAX_DIFF_SIZE="${MAX_DIFF_SIZE:-800000}"  # 800KB default limit (~200K tokens, matching model context size)
 EXCLUDE_FILE_PATTERNS="${EXCLUDE_FILE_PATTERNS:-*.lock,*.min.js,*.min.css,package-lock.json,yarn.lock}"
 
@@ -183,12 +193,13 @@ RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
           \"content\": $(echo "$PROMPT" | jq -Rs .)
         }
       ],
-      \"temperature\": $AI_TEMPERATURE
+      \"temperature\": $AI_TEMPERATURE,
+      \"max_tokens\": $AI_MAX_TOKENS
     }")
 
 # Check if API call was successful
 if [ -z "$RESPONSE" ]; then
-    echo '{"review":"## ❤️ AI Code Review\n\n❌ **Error**: API call failed - no response received","fail_pass_workflow":"uncertain","labels_added":[]}'
+    generate_error_response "API call failed - no response received"
     exit 1
 fi
 
@@ -197,7 +208,7 @@ if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
     echo "=== API DEBUG: Raw response from $AI_MODEL ===" >&2
     echo "$RESPONSE" >&2
     echo "=== END API DEBUG ===" >&2
-    echo '{"review":"## ❤️ AI Code Review\n\n❌ **Error**: Invalid JSON response from API","fail_pass_workflow":"uncertain","labels_added":[]}'
+    generate_error_response "Invalid JSON response from API"
     exit 1
 fi
 
@@ -243,7 +254,7 @@ fi
 
 # Ensure CONTENT is not empty
 if [ -z "$CONTENT" ]; then
-    echo '{"review":"## ❤️ AI Code Review\n\n❌ **Error**: AI returned empty response","fail_pass_workflow":"uncertain","labels_added":[]}'
+    generate_error_response "AI returned empty response"
     exit 0
 fi
 
@@ -263,7 +274,7 @@ CONTENT=$(echo "$CONTENT" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
 # Enhanced empty check (catches whitespace-only content)
 if [ -z "$CONTENT" ] || [ -z "$(echo "$CONTENT" | tr -d '[:space:]')" ]; then
-    echo '{"review":"## ❤️ AI Code Review\n\n❌ **Error**: AI returned empty response after processing","fail_pass_workflow":"uncertain","labels_added":[]}'
+    generate_error_response "AI returned empty response after processing"
     exit 0
 fi
 
@@ -276,15 +287,13 @@ if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
     echo "=== END DEBUG ===" >&2
 
     # Fallback to error response
-    JSON_CONTENT="{\"review\":\"## ❤️ AI Code Review\n\n❌ **Error**: Invalid JSON response from AI model\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
-    echo "$JSON_CONTENT"
+    generate_error_response "Invalid JSON response from AI model"
 else
     echo "=== CONTENT IS VALID JSON ===" >&2
     # Validate it has the required structure
     if ! echo "$CONTENT" | jq -e '.review' >/dev/null 2>&1; then
         echo "JSON missing required 'review' field" >&2
-        JSON_CONTENT="{\"review\":\"## ❤️ AI Code Review\n\n❌ **Error**: AI response missing required review field\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
-        echo "$JSON_CONTENT"
+        generate_error_response "AI response missing required review field"
     else
         echo "JSON has required structure, using as-is" >&2
         echo "$CONTENT"
