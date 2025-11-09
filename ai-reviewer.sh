@@ -62,12 +62,20 @@ Please split this PR into smaller changes for review."
     exit 1
 fi
 
-# Fetch previous AI review comments for context (if PR_NUMBER and REPO_FULL_NAME are set)
+# Fetch previous AI review (only the most recent one) for context
 PREVIOUS_REVIEWS=""
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    # Fetch comments that start with the review header
+    # Fetch only the most recent AI review comment
     PREVIOUS_REVIEWS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
-        --jq '.[] | select(.body | startswith("## AI Code Review")) | "### Previous Review (" + .created_at + "):\n" + .body + "\n---\n"' 2>/dev/null | head -c 50000 || echo "")
+        --jq '[.[] | select(.body | startswith("## AI Code Review"))] | last | if . then "### Previous AI Review (" + .created_at + "):\n" + .body + "\n---\n" else "" end' 2>/dev/null | head -c 10000 || echo "")
+fi
+
+# Fetch human comments for context
+HUMAN_COMMENTS=""
+if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+    # Fetch comments from humans (not the bot)
+    HUMAN_COMMENTS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
+        --jq '[.[] | select(.body | startswith("## AI Code Review") | not)] | map("**" + .user.login + "** (" + .created_at + "):\n" + .body) | join("\n\n---\n\n")' 2>/dev/null | head -c 20000 || echo "")
 fi
 
 # Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set)
@@ -135,10 +143,20 @@ If none of these labels are appropriate for the changes, you may suggest new one
 "
 fi
 
-# Add previous reviews context if available
+# Add human comments context if available
+if [ -n "$HUMAN_COMMENTS" ]; then
+    PROMPT_PREFIX="${PROMPT_PREFIX}
+Human Comments on this PR:
+$HUMAN_COMMENTS
+
+Please consider these human comments when reviewing the code.
+"
+fi
+
+# Add previous AI review context if available (only most recent)
 if [ -n "$PREVIOUS_REVIEWS" ]; then
     PROMPT_PREFIX="${PROMPT_PREFIX}
-Previous AI Reviews (for context on what was already reviewed):
+Previous AI Review (for context on what was already reviewed):
 $PREVIOUS_REVIEWS
 "
 fi
