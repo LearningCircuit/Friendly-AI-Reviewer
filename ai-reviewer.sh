@@ -325,6 +325,10 @@ fi
 
 # Ensure CONTENT is not empty
 if [ -z "$CONTENT" ]; then
+    echo "=== DEBUG: CONTENT IS EMPTY ===" >&2
+    echo "Full API Response:" >&2
+    echo "$RESPONSE" >&2
+    echo "=== END DEBUG ===" >&2
     generate_error_response "AI returned empty response"
     exit 0
 fi
