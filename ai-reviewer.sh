@@ -222,7 +222,14 @@ Focus on high-value issues. Style suggestions are welcome if impactful, but not 
 - Default: Skip the issue to avoid spam
 - Only ask for clarification if it's critical (security vulnerabilities, breaking bugs, data loss risks): \"Cannot verify [X] from diff - please confirm [specific question]\"
 - If making an inference about non-critical issues, explicitly label it: \"Inference (not verified): [observation]\"
-For non-critical improvements, consider approving with recommendations rather than requesting changes.
+
+Review Structure:
+1. Start with a short overall feedback summary (1-2 sentences)
+2. Then provide detailed findings
+3. End with one of these verdicts ONLY:
+   - \"✅ Approved\" (no issues found)
+   - \"✅ Approved with recommendations\" (minor improvements suggested, but not blocking)
+   - \"❌ Request changes\" (critical issues that must be fixed before merge)
 
 Required JSON format:
 {
@@ -235,6 +242,7 @@ Instructions:
 1. Respond with a single valid JSON object
 2. Include the Friendly AI Reviewer footer with heart emoji at the end of the review field
 3. For labels_added, prefer existing repository labels when possible
+4. Always end your review with one of the three verdict options listed above before the footer
 
 Code to review:
 $PROMPT_PREFIX
@@ -325,10 +333,6 @@ fi
 
 # Ensure CONTENT is not empty
 if [ -z "$CONTENT" ]; then
-    echo "=== DEBUG: CONTENT IS EMPTY ===" >&2
-    echo "Full API Response:" >&2
-    echo "$RESPONSE" >&2
-    echo "=== END DEBUG ===" >&2
     generate_error_response "AI returned empty response"
     exit 0
 fi

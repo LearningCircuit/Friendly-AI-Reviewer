@@ -48,10 +48,12 @@ jobs:
           echo "Running AI code review..."
           AI_RESPONSE=$(cat diff.txt | bash ai-reviewer.sh)
 
-          # Output raw response for debugging (temporarily always enabled)
-          echo "=== RAW AI RESPONSE FOR DEBUG ==="
-          echo "$AI_RESPONSE"
-          echo "=== END RAW AI RESPONSE ==="
+          # Output raw response for debugging (only in debug mode)
+          if [ "$DEBUG_MODE" = "true" ]; then
+            echo "=== RAW AI RESPONSE FOR DEBUG ==="
+            echo "$AI_RESPONSE"
+            echo "=== END RAW AI RESPONSE ==="
+          fi
 
           # Check if AI_RESPONSE is empty
           if [ -z "$AI_RESPONSE" ]; then
