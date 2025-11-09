@@ -256,9 +256,10 @@ if echo "$CONTENT" | grep -q "<thinking>"; then
 fi
 
 # Remove markdown code blocks - everything between ```json and ```
-if echo "$CONTENT" | grep -q "```json"; then
+# Remove markdown code blocks if present
+if echo "$CONTENT" | grep -q "json"; then
     echo "=== REMOVING MARKDOWN CODE BLOCKS ===" >&2
-    CONTENT=$(echo "$CONTENT" | sed '/^```json$/,/^```$/d')
+    CONTENT=$(echo "$CONTENT" | perl -ne 'print unless /^```json$/ .. /^```$/')
 fi
 # Validate that CONTENT is valid JSON
 if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
