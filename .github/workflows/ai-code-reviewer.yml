@@ -48,10 +48,11 @@ jobs:
           echo "Running AI code review..."
           AI_RESPONSE=$(cat diff.txt | bash ai-reviewer.sh)
 
-          # Save response for debugging (only in debug mode)
+          # Output raw response for debugging (only in debug mode)
           if [ "$DEBUG_MODE" = "true" ]; then
-            echo "Debug: AI response saved to ai_response.txt"
-            echo "$AI_RESPONSE" > ai_response.txt
+            echo "=== RAW AI RESPONSE FOR DEBUG ==="
+            echo "$AI_RESPONSE"
+            echo "=== END RAW AI RESPONSE ==="
           fi
 
           # Check if AI_RESPONSE is empty
@@ -133,7 +134,7 @@ jobs:
           echo "The review has been posted above. Please address the requested changes."
           exit 1
 
-      - name: Cleanup
+        - name: Cleanup
         if: always()
         run: |
           rm -f diff.txt
