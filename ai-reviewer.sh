@@ -36,7 +36,7 @@ EXCLUDE_FILE_PATTERNS="${EXCLUDE_FILE_PATTERNS:-*.lock,*.min.js,*.min.css,packag
 DIFF_CONTENT=$(cat)
 
 if [ -z "$DIFF_CONTENT" ]; then
-    echo "## ❤️ AI Code Review
+    echo "$REVIEW_HEADER
 
 ❌ **Error**: No diff content to analyze"
     exit 1
@@ -55,7 +55,7 @@ fi
 # Validate diff size to prevent excessive API usage
 DIFF_SIZE=${#DIFF_CONTENT}
 if [ "$DIFF_SIZE" -gt "$MAX_DIFF_SIZE" ]; then
-    echo "## ❤️ AI Code Review
+    echo "$REVIEW_HEADER
 
 ❌ **Error**: Diff is too large ($DIFF_SIZE bytes, max: $MAX_DIFF_SIZE bytes)
 Please split this PR into smaller changes for review."
@@ -65,9 +65,9 @@ fi
 # Fetch previous AI review comments for context (if PR_NUMBER and REPO_FULL_NAME are set)
 PREVIOUS_REVIEWS=""
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    # Fetch comments that start with "## ❤️ AI Code Review"
+    # Fetch comments that start with the review header
     PREVIOUS_REVIEWS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
-        --jq '.[] | select(.body | startswith("## ❤️ AI Code Review")) | "### Previous Review (" + .created_at + "):\n" + .body + "\n---\n"' 2>/dev/null | head -c 50000 || echo "")
+        --jq '.[] | select(.body | startswith("## AI Code Review")) | "### Previous Review (" + .created_at + "):\n" + .body + "\n---\n"' 2>/dev/null | head -c 50000 || echo "")
 fi
 
 # Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set)
@@ -236,11 +236,11 @@ if [ "$CONTENT" = "error" ]; then
     ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""')
 
     # Return error as JSON
-    ERROR_CONTENT="## ❤️ AI Code Review\n\n❌ **Error**: $ERROR_MSG"
+    ERROR_CONTENT="$REVIEW_HEADER\n\n❌ **Error**: $ERROR_MSG"
     if [ -n "$ERROR_CODE" ]; then
         ERROR_CONTENT="$ERROR_CONTENT\n\nError code: \`$ERROR_CODE\`"
     fi
-    ERROR_CONTENT="$ERROR_CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*"
+    ERROR_CONTENT="$ERROR_CONTENT\n\n$REVIEW_FOOTER"
 
     echo "{\"review\":\"$ERROR_CONTENT\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
 
