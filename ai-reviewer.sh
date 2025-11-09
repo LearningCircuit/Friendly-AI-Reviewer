@@ -220,6 +220,8 @@ PROMPT="You are an expert code reviewer. Please analyze this code diff and provi
 
 Focus on security, performance, code quality, and best practices.
 
+Focus on high-value issues. Style suggestions are welcome if impactful, but not minor optimizations. Be concise and dense - use bullet points for clear structure. Avoid repetition - reference earlier sections instead of re-explaining. For non-critical improvements, consider approving with recommendations rather than requesting changes.
+
 Required JSON format:
 {
   \"review\": \"## AI Code Review\\n\\n[Your detailed review in markdown format]\\n\\n---\\n*Review by [Friendly AI Reviewer](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - made with ❤️*\",
