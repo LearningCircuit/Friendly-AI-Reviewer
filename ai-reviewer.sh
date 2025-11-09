@@ -138,13 +138,11 @@ DIFF_FILE=$(mktemp)
 echo "$DIFF_CONTENT" > "$DIFF_FILE"
 
 # Build the user prompt using the diff file
-PROMPT_PREFIX="Please analyze this code diff and provide a comprehensive review in markdown format:
+PROMPT_PREFIX="Please analyze this code diff and provide a comprehensive review in markdown format.
 
-Focus Areas:
-- Security: Look for hardcoded secrets, SQL injection, XSS, authentication issues, input validation problems
-- Performance: Check for inefficient algorithms, N+1 queries, missing indexes, memory issues, blocking operations
-- Code Quality: Evaluate readability, maintainability, proper error handling, naming conventions, documentation
-- Best Practices: Ensure adherence to coding standards, proper patterns, type safety, dead code removal
+Focus on security, performance, code quality, and best practices.
+
+Keep the review scannable and grouped by importance. Lead with critical issues if any exist.
 "
 
 # Add GitHub Actions check status if available
@@ -220,7 +218,7 @@ PROMPT="You are an expert code reviewer. Please analyze this code diff and provi
 
 Focus on security, performance, code quality, and best practices.
 
-Focus on high-value issues. Style suggestions are welcome if impactful, but not minor optimizations. Be concise and dense - use bullet points for clear structure. Avoid repetition - in summary sections, only repeat critical issues (security, bugs, breaking changes). If flagging issues about code not in the diff, clearly state your assumptions. For non-critical improvements, consider approving with recommendations rather than requesting changes.
+Focus on high-value issues. Style suggestions are welcome if impactful, but not minor optimizations. Be concise and dense - use bullet points for clear structure. Avoid repetition - in summary sections, only repeat critical issues (security, bugs, breaking changes). If flagging issues about code not visible in the diff, clearly state what you're assuming and why. For non-critical improvements, consider approving with recommendations rather than requesting changes.
 
 Required JSON format:
 {
