@@ -253,7 +253,7 @@ fi
 # Remove thinking tags and content - everything between <thinking> and </thinking>
 if echo "$CONTENT" | grep -q "<thinking>"; then
     echo "=== REMOVING THINKING CONTENT ===" >&2
-    CONTENT=$(echo "$CONTENT" | sed '/<thinking>/,/</thinking>/d')
+    CONTENT=$(echo "$CONTENT" | sed '/<thinking>/,/<\/thinking>/d')
 fi
 # Validate that CONTENT is valid JSON
 if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
