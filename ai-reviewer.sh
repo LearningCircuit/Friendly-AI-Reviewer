@@ -217,9 +217,8 @@ CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "error"')
 # Debug: Log the extracted content from thinking model
 echo "=== CONTENT DEBUG: Extracted from $AI_MODEL ===" >&2
 echo "Content length: $(echo "$CONTENT" | wc -c)" >&2
-echo "Content preview (first 500 chars):" >&2
-echo "$CONTENT" | head -c 500 >&2
-echo "" >&2
+echo "Full content:" >&2
+echo "$CONTENT" >&2
 echo "=== END CONTENT DEBUG ===" >&2
 
 if [ "$CONTENT" = "error" ]; then
@@ -266,8 +265,7 @@ if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
     echo "=== JSON VALIDATION FAILED ===" >&2
     echo "Content is not valid JSON" >&2
     echo "=== RAW CONTENT FOR DEBUG ===" >&2
-    echo "$CONTENT" | head -c 500 >&2
-    echo "" >&2
+    echo "$CONTENT" >&2
     echo "=== END DEBUG ===" >&2
 
     # Fallback to error response
