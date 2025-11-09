@@ -92,14 +92,11 @@ jobs:
             fi
           done
 
-          # Handle workflow decision
+          # Handle workflow decision (after posting review and labels)
           echo "AI decision: $DECISION"
-          if [ "$FAIL_ON_REQUESTED_CHANGES" = "true" ] && [ "$DECISION" = "fail" ]; then
-            echo "❌ AI requested changes and FAIL_ON_REQUESTED_CHANGES is enabled. Failing workflow."
-            exit 1
-          fi
 
-          echo "✅ AI review completed successfully"
+          # Store the decision for later use
+          echo "DECISION=$DECISION" >> $GITHUB_ENV
 
           # Remove the ai_code_review label to make re-triggering easier
           echo "Removing ai_code_review label to allow easy re-triggering"
@@ -108,6 +105,15 @@ jobs:
           else
             echo "Failed to remove ai_code_review label (may have been already removed)"
           fi
+
+          echo "✅ AI review completed successfully"
+
+      - name: Fail Workflow if Requested
+        if: env.FAIL_ON_REQUESTED_CHANGES == 'true' && env.DECISION == 'fail'
+        run: |
+          echo "❌ AI requested changes and FAIL_ON_REQUESTED_CHANGES is enabled. Failing workflow."
+          echo "The review has been posted above. Please address the requested changes."
+          exit 1
 
       - name: Cleanup
         if: always()
