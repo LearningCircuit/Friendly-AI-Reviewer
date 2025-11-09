@@ -7,7 +7,7 @@ set -e
 
 # Constants
 REVIEW_HEADER="## AI Code Review"
-REVIEW_FOOTER="---\n*Review by [F-AI-R](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - made with ❤️*"
+REVIEW_FOOTER="---\n*Review by [Friendly AI Reviewer](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - made with ❤️*"
 
 # Helper function to generate error response JSON
 generate_error_response() {
@@ -159,14 +159,14 @@ Focus on security, performance, code quality, and best practices.
 
 Required JSON format:
 {
-  \"review\": \"## AI Code Review\\n\\n[Your detailed review in markdown format]\\n\\n---\\n*Review by [F-AI-R](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - made with ❤️*\",
+  \"review\": \"## AI Code Review\\n\\n[Your detailed review in markdown format]\\n\\n---\\n*Review by [Friendly AI Reviewer](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - made with ❤️*\",
   \"fail_pass_workflow\": \"pass\",
   \"labels_added\": [\"bug\", \"feature\", \"enhancement\"]
 }
 
 Instructions:
 1. Respond with a single valid JSON object
-2. Include the F-AI-R footer with heart emoji at the end of the review field
+2. Include the Friendly AI Reviewer footer with heart emoji at the end of the review field
 3. For labels_added, prefer existing repository labels when possible
 
 Code to review:
