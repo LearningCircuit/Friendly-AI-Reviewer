@@ -275,23 +275,27 @@ if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
     exit 1
 fi
 
-# Always log the API response structure for debugging thinking models
-echo "=== API STRUCTURE DEBUG from $AI_MODEL ===" >&2
-echo "Response keys: $(echo "$RESPONSE" | jq -r 'keys | join(", ")')" >&2
-echo "Choices count: $(echo "$RESPONSE" | jq '.choices | length')" >&2
-echo "First choice keys: $(echo "$RESPONSE" | jq -r '.choices[0] | keys | join(", ")')" >&2
-echo "Content type: $(echo "$RESPONSE" | jq -r '.choices[0].message | type')" >&2
-echo "=== END API STRUCTURE DEBUG ===" >&2
+# Log the API response structure for debugging thinking models (if debug mode enabled)
+if [ "$DEBUG_MODE" = "true" ]; then
+    echo "=== API STRUCTURE DEBUG from $AI_MODEL ===" >&2
+    echo "Response keys: $(echo "$RESPONSE" | jq -r 'keys | join(", ")')" >&2
+    echo "Choices count: $(echo "$RESPONSE" | jq '.choices | length')" >&2
+    echo "First choice keys: $(echo "$RESPONSE" | jq -r '.choices[0] | keys | join(", ")')" >&2
+    echo "Content type: $(echo "$RESPONSE" | jq -r '.choices[0].message | type')" >&2
+    echo "=== END API STRUCTURE DEBUG ===" >&2
+fi
 
 # Extract the content
 CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "error"')
 
-# Debug: Log the extracted content from thinking model
-echo "=== CONTENT DEBUG: Extracted from $AI_MODEL ===" >&2
-echo "Content length: $(echo "$CONTENT" | wc -c)" >&2
-echo "Full content:" >&2
-echo "$CONTENT" >&2
-echo "=== END CONTENT DEBUG ===" >&2
+# Log the extracted content from thinking model (if debug mode enabled)
+if [ "$DEBUG_MODE" = "true" ]; then
+    echo "=== CONTENT DEBUG: Extracted from $AI_MODEL ===" >&2
+    echo "Content length: $(echo "$CONTENT" | wc -c)" >&2
+    echo "Full content:" >&2
+    echo "$CONTENT" >&2
+    echo "=== END CONTENT DEBUG ===" >&2
+fi
 
 if [ "$CONTENT" = "error" ]; then
     # Try to extract error details from the API response
@@ -327,7 +331,9 @@ CONTENT=$(echo "$CONTENT" | perl -0pe 's/<thinking>.*?<\/thinking>\s*//gs')
 
 # Remove markdown code blocks if present (check for actual backticks at line start)
 if echo "$CONTENT" | grep -qE '^\s*```json'; then
-    echo "=== REMOVING MARKDOWN CODE BLOCKS ===" >&2
+    if [ "$DEBUG_MODE" = "true" ]; then
+        echo "=== REMOVING MARKDOWN CODE BLOCKS ===" >&2
+    fi
     # Remove the opening ```json and closing ``` lines, keep the content
     CONTENT=$(echo "$CONTENT" | perl -0pe 's/^\s*```json\s*\n//g; s/\n```\s*$//g')
 fi
@@ -343,22 +349,30 @@ fi
 
 # Validate that CONTENT is valid JSON
 if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
-    echo "=== JSON VALIDATION FAILED ===" >&2
-    echo "Content is not valid JSON" >&2
-    echo "=== RAW CONTENT FOR DEBUG ===" >&2
-    echo "$CONTENT" >&2
-    echo "=== END DEBUG ===" >&2
+    if [ "$DEBUG_MODE" = "true" ]; then
+        echo "=== JSON VALIDATION FAILED ===" >&2
+        echo "Content is not valid JSON" >&2
+        echo "=== RAW CONTENT FOR DEBUG ===" >&2
+        echo "$CONTENT" >&2
+        echo "=== END DEBUG ===" >&2
+    fi
 
     # Fallback to error response
     generate_error_response "Invalid JSON response from AI model"
 else
-    echo "=== CONTENT IS VALID JSON ===" >&2
+    if [ "$DEBUG_MODE" = "true" ]; then
+        echo "=== CONTENT IS VALID JSON ===" >&2
+    fi
     # Validate it has the required structure
     if ! echo "$CONTENT" | jq -e '.review' >/dev/null 2>&1; then
-        echo "JSON missing required 'review' field" >&2
+        if [ "$DEBUG_MODE" = "true" ]; then
+            echo "JSON missing required 'review' field" >&2
+        fi
         generate_error_response "AI response missing required review field"
     else
-        echo "JSON has required structure, using as-is" >&2
+        if [ "$DEBUG_MODE" = "true" ]; then
+            echo "JSON has required structure, using as-is" >&2
+        fi
         echo "$CONTENT"
     fi
 fi
