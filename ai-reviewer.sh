@@ -19,7 +19,6 @@ fi
 # Configuration with defaults
 AI_MODEL="${AI_MODEL:-moonshotai/kimi-k2-thinking}"
 AI_TEMPERATURE="${AI_TEMPERATURE:-0.1}"
-AI_MAX_TOKENS="${AI_MAX_TOKENS:-2000}"
 MAX_DIFF_SIZE="${MAX_DIFF_SIZE:-800000}"  # 800KB default limit (~200K tokens, matching model context size)
 EXCLUDE_FILE_PATTERNS="${EXCLUDE_FILE_PATTERNS:-*.lock,*.min.js,*.min.css,package-lock.json,yarn.lock}"
 
@@ -184,8 +183,7 @@ RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
           \"content\": $(echo "$PROMPT" | jq -Rs .)
         }
       ],
-      \"temperature\": $AI_TEMPERATURE,
-      \"max_tokens\": $AI_MAX_TOKENS
+      \"temperature\": $AI_TEMPERATURE
     }")
 
 # Check if API call was successful
