@@ -255,6 +255,12 @@ if echo "$CONTENT" | grep -q "<thinking>"; then
     echo "=== REMOVING THINKING CONTENT ===" >&2
     CONTENT=$(echo "$CONTENT" | sed '/<thinking>/,/<\/thinking>/d')
 fi
+
+# Remove markdown code blocks - everything between ```json and ```
+if echo "$CONTENT" | grep -q "```json"; then
+    echo "=== REMOVING MARKDOWN CODE BLOCKS ===" >&2
+    CONTENT=$(echo "$CONTENT" | sed '/^```json$/,/^```$/d')
+fi
 # Validate that CONTENT is valid JSON
 if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
     echo "=== JSON VALIDATION FAILED ===" >&2
