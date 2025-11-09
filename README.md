@@ -1,11 +1,20 @@
-# Friendly AI Reviewer (FAIR) Setup Guide
+# Friendly AI Reviewer Setup Guide
 
 - Creates highly-customizable AI Reviews as PR comments.
-- Installation: Just 2 files copied to your repo and a open router API Key in your secrets.
-- Costs: $0.01 - $0.05 per review (depends highly on model)
-- ** Example output ** https://github.com/LearningCircuit/local-deep-research/pull/959#issuecomment-3445396169
+- Installation: Just 2 files copied to your repo and an OpenRouter API Key in your secrets.
+- Costs: $0.01 - $0.05 per review (even for large PRs with full context)
+- **Example output**: https://github.com/LearningCircuit/local-deep-research/pull/959#issuecomment-3445396169
 
 This guide explains how to set up the automated AI PR review system using OpenRouter to analyze pull requests with your choice of AI model.
+
+## What's New
+
+**Latest Updates:**
+- **Thinking Model Support**: Now supports advanced reasoning models like Kimi K2 that use `<thinking>` tags
+- **Rich Context**: Includes PR descriptions, commit messages, and human comments for comprehensive reviews
+- **Higher Token Limits**: Default 64k tokens for complete reviews without truncation
+- **Smart Context Management**: Only fetches most recent AI review to save tokens
+- **Enhanced Error Handling**: Robust parsing of various AI response formats
 
 ## Overview
 
@@ -45,12 +54,20 @@ The review is posted as a single comprehensive comment on your pull request with
 
 ### 3. Configure Workflow (Optional)
 
-The workflow is pre-configured with sensible defaults, but you can customize it by editing `.github/workflows/ai-code-reviewer.yml`:
+The workflow is pre-configured with sensible defaults, but you can customize it by setting repository variables in **Settings** → **Secrets and variables** → **Actions** → **Variables**:
 
-- **AI_MODEL**: Change the AI model (see [OpenRouter models](https://openrouter.ai/models))
+- **AI_MODEL**: Change the AI model (default: `moonshotai/kimi-k2-thinking`)
+  - See [OpenRouter models](https://openrouter.ai/models) for options
+  - Recommended: Models with reasoning capabilities (Kimi K2, o1, etc.)
 - **AI_TEMPERATURE**: Adjust randomness (default: `0.1` for consistent reviews)
-- **AI_MAX_TOKENS**: Maximum response length (default: `2000`)
+- **AI_MAX_TOKENS**: Maximum response length (default: `64000`)
+  - High limit ensures comprehensive reviews without truncation
+  - For large PRs with thinking models, this prevents cut-off responses
+  - Adjust lower for cost savings on smaller PRs
 - **MAX_DIFF_SIZE**: Maximum diff size in bytes (default: `800000` / 800KB)
+- **DEBUG_MODE**: Enable debug logging (default: `false`)
+  - ⚠️ Warning: Exposes code diff in workflow logs when enabled
+  - Only enable temporarily for troubleshooting
 
 ## Usage
 
@@ -79,11 +96,31 @@ The AI posts a comprehensive comment analyzing your code across all focus areas.
 
 ## Cost Estimation
 
-Costs vary by model, but most code-focused models on OpenRouter are very affordable:
-- Typical small PR (< 1000 lines): $0.001 - $0.01
-- Large PR (1000-5000 lines): $0.01 - $0.05
+Costs with the default Kimi K2 thinking model are very affordable. Based on real usage data:
 
-Check [OpenRouter pricing](https://openrouter.ai/models) for specific model costs.
+**Typical Costs:**
+- Small PR (< 1000 lines): $0.01 - $0.02
+- Medium PR (1000-3000 lines): $0.02 - $0.04
+- Large PR (3000+ lines): $0.04 - $0.06
+
+**Example from a 20-commit PR with full context:**
+- Input: ~5,000-9,000 tokens (diff + PR description + commits + human comments)
+- Output: ~2,000-6,000 tokens (comprehensive review)
+- **Total cost: $0.01 - $0.05 per review**
+
+**Why So Affordable:**
+- Kimi K2 has competitive pricing (~$0.001-$0.003 per 1k tokens)
+- Smart context management (only most recent AI review, limited commit history)
+- Most PRs are smaller than you think in token count
+- The 64k token limit is a ceiling, not typical usage
+
+**Cost varies based on:**
+- PR size (larger diffs = more input tokens)
+- Review complexity (detailed reviews = more output tokens)
+- Number of human comments and commit messages included
+- OpenRouter provider routing (prices vary slightly by provider)
+
+Check [OpenRouter pricing](https://openrouter.ai/models) for current Kimi K2 rates.
 
 ## Customization
 
@@ -138,11 +175,14 @@ If you get a "Diff is too large" error:
 
 The workflow fetches and sends these repository elements to the AI:
 1. **Code Changes**: Full diff of modified files
-2. **Labels**: All repository labels with descriptions and colors
-3. **Previous Comments**: All previous AI review comments from the PR
-4. **CI/CD Status**: GitHub Actions check runs and build statuses
-5. **PR Metadata**: Pull request details, head SHA, repository information
-6. **Files**: May include sensitive configuration files, keys, or credentials
+2. **PR Description**: Title and description text from the pull request
+3. **Commit Messages**: Up to 15 most recent commit messages (excluding merges)
+4. **Human Comments**: All comments from human reviewers on the PR
+5. **Labels**: All repository labels with descriptions and colors
+6. **Previous AI Review**: Most recent AI review comment only (limited to 10k chars)
+7. **CI/CD Status**: GitHub Actions check runs and build statuses
+8. **PR Metadata**: Pull request details, head SHA, repository information
+9. **Files**: May include sensitive configuration files, keys, or credentials
 
 ### Recommended Mitigations
 
