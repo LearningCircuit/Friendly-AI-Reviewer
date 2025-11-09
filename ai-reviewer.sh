@@ -203,12 +203,23 @@ fi
 
 # Check if response is valid JSON
 if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
+    echo "=== API DEBUG: Raw response from $AI_MODEL ===" >&2
+    echo "$RESPONSE" >&2
+    echo "=== END API DEBUG ===" >&2
     echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: Invalid JSON response from API","fail_pass_workflow":"uncertain","labels_added":[]}'
     exit 1
 fi
 
 # Extract the content
 CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "error"')
+
+# Debug: Log the extracted content from thinking model
+echo "=== CONTENT DEBUG: Extracted from $AI_MODEL ===" >&2
+echo "Content length: $(echo "$CONTENT" | wc -c)" >&2
+echo "Content preview (first 500 chars):" >&2
+echo "$CONTENT" | head -c 500 >&2
+echo "" >&2
+echo "=== END CONTENT DEBUG ===" >&2
 
 if [ "$CONTENT" = "error" ]; then
     # Try to extract error details from the API response
@@ -238,17 +249,43 @@ if [ -z "$CONTENT" ]; then
     exit 0
 fi
 
+# Debug: Check if content looks like thinking format
+if echo "$CONTENT" | grep -q "thinking\|<think>\|<reasoning>"; then
+    echo "=== THINKING FORMAT DETECTED ===" >&2
+    echo "Content appears to contain thinking/reasoning format" >&2
+    echo "Attempting to extract JSON from thinking response..." >&2
+    echo "===================================" >&2
+fi
+
 # Validate that CONTENT is valid JSON
 if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
+    echo "=== JSON VALIDATION FAILED ===" >&2
+    echo "Content is not valid JSON" >&2
+
+    # Try to extract JSON from thinking response
+    if echo "$CONTENT" | grep -q '{.*}'; then
+        echo "Attempting to extract JSON from thinking content..." >&2
+        # Look for JSON-like patterns in the content
+        EXTRACTED_JSON=$(echo "$CONTENT" | grep -o '{[^{}]*"review"[^{}]*}' | head -1)
+        if [ -n "$EXTRACTED_JSON" ] && echo "$EXTRACTED_JSON" | jq . >/dev/null 2>&1; then
+            echo "Successfully extracted JSON from thinking response!" >&2
+            echo "$EXTRACTED_JSON"
+            exit 0
+        fi
+    fi
+
     # If not JSON, wrap it in JSON structure
     JSON_CONTENT="{\"review\":\"## 🤖 AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
     echo "$JSON_CONTENT"
 else
+    echo "=== CONTENT IS VALID JSON ===" >&2
     # If already JSON, validate it has the required structure
     if ! echo "$CONTENT" | jq -e '.review' >/dev/null 2>&1; then
+        echo "JSON missing required 'review' field" >&2
         JSON_CONTENT="{\"review\":\"## 🤖 AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
         echo "$JSON_CONTENT"
     else
+        echo "JSON has required structure, returning as-is" >&2
         # If already valid JSON with required structure, return as-is
         echo "$CONTENT"
     fi

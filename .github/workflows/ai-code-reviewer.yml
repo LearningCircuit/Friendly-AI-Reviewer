@@ -63,8 +63,26 @@ jobs:
           # Parse JSON response
           if ! echo "$AI_RESPONSE" | jq . >/dev/null 2>&1; then
             echo "⚠️ AI response is not valid JSON. Cannot process review."
+
+            # Log raw response for debugging (redact sensitive info)
+            echo "=== DEBUG: Raw AI Response (first 2000 chars) ==="
+            echo "$AI_RESPONSE" | head -c 2000
+            echo ""
+            echo "=== END DEBUG ==="
+
+            # Try to extract JSON from thinking model response
+            if echo "$AI_RESPONSE" | grep -q '"content"'; then
+              echo "=== DEBUG: Attempting to extract content from response ==="
+              EXTRACTED_CONTENT=$(echo "$AI_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null || echo "")
+              if [ -n "$EXTRACTED_CONTENT" ]; then
+                echo "Extracted content (first 1000 chars):"
+                echo "$EXTRACTED_CONTENT" | head -c 1000
+                echo ""
+              fi
+            fi
+
             # Don't post raw response as it may contain sensitive data
-            echo "AI response could not be processed. Please check the workflow logs." | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F -
+            echo "AI response could not be processed. Please check the workflow logs for debugging information." | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F -
             exit 1
           fi
 
