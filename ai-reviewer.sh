@@ -10,7 +10,7 @@ set -e
 API_KEY="${OPENROUTER_API_KEY}"
 
 if [ -z "$API_KEY" ]; then
-    echo "## 🤖 AI Code Review
+    echo "## ❤️ AI Code Review
 
 ❌ **Error**: Missing OPENROUTER_API_KEY environment variable"
     exit 1
@@ -27,7 +27,7 @@ EXCLUDE_FILE_PATTERNS="${EXCLUDE_FILE_PATTERNS:-*.lock,*.min.js,*.min.css,packag
 DIFF_CONTENT=$(cat)
 
 if [ -z "$DIFF_CONTENT" ]; then
-    echo "## 🤖 AI Code Review
+    echo "## ❤️ AI Code Review
 
 ❌ **Error**: No diff content to analyze"
     exit 1
@@ -46,7 +46,7 @@ fi
 # Validate diff size to prevent excessive API usage
 DIFF_SIZE=${#DIFF_CONTENT}
 if [ "$DIFF_SIZE" -gt "$MAX_DIFF_SIZE" ]; then
-    echo "## 🤖 AI Code Review
+    echo "## ❤️ AI Code Review
 
 ❌ **Error**: Diff is too large ($DIFF_SIZE bytes, max: $MAX_DIFF_SIZE bytes)
 Please split this PR into smaller changes for review."
@@ -56,9 +56,9 @@ fi
 # Fetch previous AI review comments for context (if PR_NUMBER and REPO_FULL_NAME are set)
 PREVIOUS_REVIEWS=""
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    # Fetch comments that start with "## 🤖 AI Code Review"
+    # Fetch comments that start with "## ❤️ AI Code Review"
     PREVIOUS_REVIEWS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
-        --jq '.[] | select(.body | startswith("## 🤖 AI Code Review")) | "### Previous Review (" + .created_at + "):\n" + .body + "\n---\n"' 2>/dev/null | head -c 50000 || echo "")
+        --jq '.[] | select(.body | startswith("## ❤️ AI Code Review")) | "### Previous Review (" + .created_at + "):\n" + .body + "\n---\n"' 2>/dev/null | head -c 50000 || echo "")
 fi
 
 # Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set)
@@ -197,7 +197,7 @@ RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
 
 # Check if API call was successful
 if [ -z "$RESPONSE" ]; then
-    echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: API call failed - no response received","fail_pass_workflow":"uncertain","labels_added":[]}'
+    echo '{"review":"## ❤️ AI Code Review\n\n❌ **Error**: API call failed - no response received","fail_pass_workflow":"uncertain","labels_added":[]}'
     exit 1
 fi
 
@@ -206,7 +206,7 @@ if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
     echo "=== API DEBUG: Raw response from $AI_MODEL ===" >&2
     echo "$RESPONSE" >&2
     echo "=== END API DEBUG ===" >&2
-    echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: Invalid JSON response from API","fail_pass_workflow":"uncertain","labels_added":[]}'
+    echo '{"review":"## ❤️ AI Code Review\n\n❌ **Error**: Invalid JSON response from API","fail_pass_workflow":"uncertain","labels_added":[]}'
     exit 1
 fi
 
@@ -227,7 +227,7 @@ if [ "$CONTENT" = "error" ]; then
     ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""')
 
     # Return error as JSON
-    ERROR_CONTENT="## 🤖 AI Code Review\n\n❌ **Error**: $ERROR_MSG"
+    ERROR_CONTENT="## ❤️ AI Code Review\n\n❌ **Error**: $ERROR_MSG"
     if [ -n "$ERROR_CODE" ]; then
         ERROR_CONTENT="$ERROR_CONTENT\n\nError code: \`$ERROR_CODE\`"
     fi
@@ -245,16 +245,39 @@ fi
 
 # Ensure CONTENT is not empty
 if [ -z "$CONTENT" ]; then
-    echo '{"review":"## 🤖 AI Code Review\n\n❌ **Error**: AI returned empty response","fail_pass_workflow":"uncertain","labels_added":[]}'
+    echo '{"review":"## ❤️ AI Code Review\n\n❌ **Error**: AI returned empty response","fail_pass_workflow":"uncertain","labels_added":[]}'
     exit 0
 fi
 
 # Debug: Check if content looks like thinking format
 if echo "$CONTENT" | grep -q "thinking\|<think>\|<reasoning>"; then
     echo "=== THINKING FORMAT DETECTED ===" >&2
-    echo "Content appears to contain thinking/reasoning format" >&2
+    echo "Content appears to contain thinking/reasoning format with markdown" >&2
     echo "Attempting to extract JSON from thinking response..." >&2
     echo "===================================" >&2
+
+    # Try to extract JSON from thinking format with markdown code blocks
+    CLEANED_CONTENT="$CONTENT"
+
+    # Remove markdown code blocks (```json ... ```)
+    if echo "$CLEANED_CONTENT" | grep -q '```json'; then
+        echo "Removing markdown code blocks..." >&2
+        CLEANED_CONTENT=$(echo "$CLEANED_CONTENT" | sed '/^```json$/,/^```$/d' | tr -d '\n')
+    fi
+
+    # Extract JSON object from content if it's wrapped in text
+    if echo "$CLEANED_CONTENT" | grep -q '{.*}'; then
+        echo "Extracting JSON object from content..." >&2
+        EXTRACTED_JSON=$(echo "$CLEANED_CONTENT" | grep -o '{.*}' | head -1)
+        if [ -n "$EXTRACTED_JSON" ] && echo "$EXTRACTED_JSON" | jq . >/dev/null 2>&1; then
+            echo "Successfully extracted clean JSON from thinking response!" >&2
+            # Update the review content to include heart icon and repo link
+            UPDATED_JSON=$(echo "$EXTRACTED_JSON" | jq --arg repo_link "https://github.com/LearningCircuit/Friendly-AI-Reviewer" '
+                .review = "## ❤️ AI Code Review\n\n" + .review + "\n\n---\n*Review by [FAIR](" + $repo_link + ") - made with ❤️*"')
+            echo "$UPDATED_JSON"
+            exit 0
+        fi
+    fi
 fi
 
 # Validate that CONTENT is valid JSON
@@ -275,18 +298,29 @@ if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
     fi
 
     # If not JSON, wrap it in JSON structure
-    JSON_CONTENT="{\"review\":\"## 🤖 AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
+    JSON_CONTENT="{\"review\":\"## ❤️ AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
     echo "$JSON_CONTENT"
 else
     echo "=== CONTENT IS VALID JSON ===" >&2
     # If already JSON, validate it has the required structure
     if ! echo "$CONTENT" | jq -e '.review' >/dev/null 2>&1; then
         echo "JSON missing required 'review' field" >&2
-        JSON_CONTENT="{\"review\":\"## 🤖 AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
+        JSON_CONTENT="{\"review\":\"## ❤️ AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
         echo "$JSON_CONTENT"
     else
-        echo "JSON has required structure, returning as-is" >&2
-        # If already valid JSON with required structure, return as-is
-        echo "$CONTENT"
+        echo "JSON has required structure, updating with heart icon and repo link" >&2
+        # Update the existing JSON to include heart icon and repo link
+        UPDATED_JSON=$(echo "$CONTENT" | jq --arg repo_link "https://github.com/LearningCircuit/Friendly-AI-Reviewer" '
+            if .review | startswith("## ❤️") and (.review | contains("Review by [FAIR]") | not) then
+                .review = .review + "\n\n---\n*Review by [FAIR](" + $repo_link + ") - made with ❤️*"
+            elif .review | startswith("## ") and (.review | contains("AI Code Review") | not) then
+                .review = "## ❤️ " + (.review | sub("^## "; "")) + "\n\n---\n*Review by [FAIR](" + $repo_link + ") - made with ❤️*"
+            elif .review | contains("Review by [FAIR]") | not then
+                .review = .review + "\n\n---\n*Review by [FAIR](" + $repo_link + ") - made with ❤️*"
+            else
+                .
+            end
+        ')
+        echo "$UPDATED_JSON"
     fi
 fi
