@@ -143,29 +143,22 @@ Code diff to analyze:
 # Read diff content
 DIFF_CONTENT=$(cat "$DIFF_FILE")
 
-# Simple text prompt
-PROMPT="Please analyze this code diff and provide a comprehensive review.
+# Simple text prompt requesting JSON response
+PROMPT="You are an expert code reviewer. Please analyze this code diff and provide a comprehensive review.
 
 Focus on security, performance, code quality, and best practices.
 
-IMPORTANT: Respond with valid JSON only using this exact format:
+Required JSON format:
 {
-  \"review\": \"Detailed review in markdown format\",
+  \"review\": \"## ❤️ AI Code Review\\n\\n[Your detailed review in markdown format]\\n\\n---\\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - made with ❤️*\",
   \"fail_pass_workflow\": \"pass\",
   \"labels_added\": [\"bug\", \"feature\", \"enhancement\"]
 }
 
-For the labels_added field:
-- First check if any existing repository labels (listed above) are appropriate
-- Prefer existing labels over creating new ones when possible
-- Only suggest new labels when no existing ones fit the changes
-- Keep labels concise and descriptive
-
-Focus action items on critical fixes only, not trivial nitpicks.
-
-IMPORTANT: End your review with a clear final assessment section like:
----
-## Final Assessment: APPROVED / CHANGES REQUESTED / NEEDS REVISION
+Instructions:
+1. Respond with a single valid JSON object
+2. Include the heart emoji and repo link in the review field
+3. For labels_added, prefer existing repository labels when possible
 
 Code to review:
 $PROMPT_PREFIX
@@ -210,6 +203,14 @@ if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
     exit 1
 fi
 
+# Always log the API response structure for debugging thinking models
+echo "=== API STRUCTURE DEBUG from $AI_MODEL ===" >&2
+echo "Response keys: $(echo "$RESPONSE" | jq -r 'keys | join(", ")')" >&2
+echo "Choices count: $(echo "$RESPONSE" | jq '.choices | length')" >&2
+echo "First choice keys: $(echo "$RESPONSE" | jq -r '.choices[0] | keys | join(", ")')" >&2
+echo "Content type: $(echo "$RESPONSE" | jq -r '.choices[0].message | type')" >&2
+echo "=== END API STRUCTURE DEBUG ===" >&2
+
 # Extract the content
 CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "error"')
 
@@ -249,78 +250,32 @@ if [ -z "$CONTENT" ]; then
     exit 0
 fi
 
-# Debug: Check if content looks like thinking format
-if echo "$CONTENT" | grep -q "thinking\|<think>\|<reasoning>"; then
-    echo "=== THINKING FORMAT DETECTED ===" >&2
-    echo "Content appears to contain thinking/reasoning format with markdown" >&2
-    echo "Attempting to extract JSON from thinking response..." >&2
-    echo "===================================" >&2
-
-    # Try to extract JSON from thinking format with markdown code blocks
-    CLEANED_CONTENT="$CONTENT"
-
-    # Remove markdown code blocks (```json ... ```)
-    if echo "$CLEANED_CONTENT" | grep -q '```json'; then
-        echo "Removing markdown code blocks..." >&2
-        CLEANED_CONTENT=$(echo "$CLEANED_CONTENT" | sed '/^```json$/,/^```$/d' | tr -d '\n')
-    fi
-
-    # Extract JSON object from content if it's wrapped in text
-    if echo "$CLEANED_CONTENT" | grep -q '{.*}'; then
-        echo "Extracting JSON object from content..." >&2
-        EXTRACTED_JSON=$(echo "$CLEANED_CONTENT" | grep -o '{.*}' | head -1)
-        if [ -n "$EXTRACTED_JSON" ] && echo "$EXTRACTED_JSON" | jq . >/dev/null 2>&1; then
-            echo "Successfully extracted clean JSON from thinking response!" >&2
-            # Update the review content to include heart icon and repo link
-            UPDATED_JSON=$(echo "$EXTRACTED_JSON" | jq --arg repo_link "https://github.com/LearningCircuit/Friendly-AI-Reviewer" '
-                .review = "## ❤️ AI Code Review\n\n" + .review + "\n\n---\n*Review by [FAIR](" + $repo_link + ") - made with ❤️*"')
-            echo "$UPDATED_JSON"
-            exit 0
-        fi
-    fi
+# Remove thinking tags and content - everything between <thinking> and </thinking>
+if echo "$CONTENT" | grep -q "<thinking>"; then
+    echo "=== REMOVING THINKING CONTENT ===" >&2
+    CONTENT=$(echo "$CONTENT" | sed '/<thinking>/,/</thinking>/d')
 fi
-
 # Validate that CONTENT is valid JSON
 if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
     echo "=== JSON VALIDATION FAILED ===" >&2
     echo "Content is not valid JSON" >&2
+    echo "=== RAW CONTENT FOR DEBUG ===" >&2
+    echo "$CONTENT" | head -c 500 >&2
+    echo "" >&2
+    echo "=== END DEBUG ===" >&2
 
-    # Try to extract JSON from thinking response
-    if echo "$CONTENT" | grep -q '{.*}'; then
-        echo "Attempting to extract JSON from thinking content..." >&2
-        # Look for JSON-like patterns in the content
-        EXTRACTED_JSON=$(echo "$CONTENT" | grep -o '{[^{}]*"review"[^{}]*}' | head -1)
-        if [ -n "$EXTRACTED_JSON" ] && echo "$EXTRACTED_JSON" | jq . >/dev/null 2>&1; then
-            echo "Successfully extracted JSON from thinking response!" >&2
-            echo "$EXTRACTED_JSON"
-            exit 0
-        fi
-    fi
-
-    # If not JSON, wrap it in JSON structure
-    JSON_CONTENT="{\"review\":\"## ❤️ AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
+    # Fallback to error response
+    JSON_CONTENT="{\"review\":\"## ❤️ AI Code Review\n\n❌ **Error**: Invalid JSON response from AI model\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
     echo "$JSON_CONTENT"
 else
     echo "=== CONTENT IS VALID JSON ===" >&2
-    # If already JSON, validate it has the required structure
+    # Validate it has the required structure
     if ! echo "$CONTENT" | jq -e '.review' >/dev/null 2>&1; then
         echo "JSON missing required 'review' field" >&2
-        JSON_CONTENT="{\"review\":\"## ❤️ AI Code Review\n\n$CONTENT\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
+        JSON_CONTENT="{\"review\":\"## ❤️ AI Code Review\n\n❌ **Error**: AI response missing required review field\n\n---\n*Review by [FAIR](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - needs human verification*\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
         echo "$JSON_CONTENT"
     else
-        echo "JSON has required structure, updating with heart icon and repo link" >&2
-        # Update the existing JSON to include heart icon and repo link
-        UPDATED_JSON=$(echo "$CONTENT" | jq --arg repo_link "https://github.com/LearningCircuit/Friendly-AI-Reviewer" '
-            if .review | startswith("## ❤️") and (.review | contains("Review by [FAIR]") | not) then
-                .review = .review + "\n\n---\n*Review by [FAIR](" + $repo_link + ") - made with ❤️*"
-            elif .review | startswith("## ") and (.review | contains("AI Code Review") | not) then
-                .review = "## ❤️ " + (.review | sub("^## "; "")) + "\n\n---\n*Review by [FAIR](" + $repo_link + ") - made with ❤️*"
-            elif .review | contains("Review by [FAIR]") | not then
-                .review = .review + "\n\n---\n*Review by [FAIR](" + $repo_link + ") - made with ❤️*"
-            else
-                .
-            end
-        ')
-        echo "$UPDATED_JSON"
+        echo "JSON has required structure, using as-is" >&2
+        echo "$CONTENT"
     fi
 fi
