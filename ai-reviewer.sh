@@ -250,17 +250,25 @@ if [ -z "$CONTENT" ]; then
 fi
 
 # Remove thinking tags and content - everything between <thinking> and </thinking>
-if echo "$CONTENT" | grep -q "<thinking>"; then
-    echo "=== REMOVING THINKING CONTENT ===" >&2
-    CONTENT=$(echo "$CONTENT" | sed '/<thinking>/,/<\/thinking>/d')
+# Use perl for proper multiline and inline handling
+CONTENT=$(echo "$CONTENT" | perl -0pe 's/<thinking>.*?<\/thinking>\s*//gs')
+
+# Remove markdown code blocks if present (check for actual backticks at line start)
+if echo "$CONTENT" | grep -qE '^\s*```json'; then
+    echo "=== REMOVING MARKDOWN CODE BLOCKS ===" >&2
+    # Remove the opening ```json and closing ``` lines, keep the content
+    CONTENT=$(echo "$CONTENT" | perl -0pe 's/^\s*```json\s*\n//g; s/\n```\s*$//g')
 fi
 
-# Remove markdown code blocks - everything between ```json and ```
-# Remove markdown code blocks if present
-if echo "$CONTENT" | grep -q "json"; then
-    echo "=== REMOVING MARKDOWN CODE BLOCKS ===" >&2
-    CONTENT=$(echo "$CONTENT" | perl -ne 'print unless /^```json$/ .. /^```$/')
+# Trim leading and trailing whitespace
+CONTENT=$(echo "$CONTENT" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+# Enhanced empty check (catches whitespace-only content)
+if [ -z "$CONTENT" ] || [ -z "$(echo "$CONTENT" | tr -d '[:space:]')" ]; then
+    echo '{"review":"## ❤️ AI Code Review\n\n❌ **Error**: AI returned empty response after processing","fail_pass_workflow":"uncertain","labels_added":[]}'
+    exit 0
 fi
+
 # Validate that CONTENT is valid JSON
 if ! echo "$CONTENT" | jq . >/dev/null 2>&1; then
     echo "=== JSON VALIDATION FAILED ===" >&2
