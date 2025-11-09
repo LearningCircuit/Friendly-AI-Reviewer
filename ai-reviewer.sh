@@ -107,6 +107,31 @@ if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; th
     fi
 fi
 
+# Fetch PR title and description
+PR_DESCRIPTION=""
+if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+    echo "🔍 Fetching PR title and description..." >&2
+    PR_DESCRIPTION=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" \
+        --jq '"**PR Title**: " + .title + "\n\n**Description**:\n" + (.body // "No description provided")' 2>/dev/null | head -c 2000 || echo "")
+
+    if [ -n "$PR_DESCRIPTION" ]; then
+        echo "✅ Successfully fetched PR description" >&2
+    fi
+fi
+
+# Fetch commit messages (limit to 15 most recent, exclude merges)
+COMMIT_MESSAGES=""
+if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+    echo "🔍 Fetching commit messages..." >&2
+    COMMIT_MESSAGES=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER/commits" --paginate \
+        --jq '[.[] | select(.commit.message | startswith("Merge") | not)] | .[-15:] | .[] | "- " + (.commit.message | split("\n")[0]) + (if (.commit.message | split("\n\n")[1]) then "\n  " + (.commit.message | split("\n\n")[1]) else "" end)' 2>/dev/null | head -c 2500 || echo "")
+
+    if [ -n "$COMMIT_MESSAGES" ]; then
+        COMMIT_COUNT=$(echo "$COMMIT_MESSAGES" | grep -c "^- " || echo "0")
+        echo "✅ Successfully fetched $COMMIT_COUNT commit messages" >&2
+    fi
+fi
+
 # Create the JSON request with proper escaping using jq
 # Write diff to temporary file to avoid "Argument list too long" error
 DIFF_FILE=$(mktemp)
@@ -140,6 +165,26 @@ Please prefer using existing labels from this list over creating new ones:
 $AVAILABLE_LABELS
 
 If none of these labels are appropriate for the changes, you may suggest new ones.
+"
+fi
+
+# Add PR description if available
+if [ -n "$PR_DESCRIPTION" ]; then
+    PROMPT_PREFIX="${PROMPT_PREFIX}
+Pull Request Context:
+$PR_DESCRIPTION
+
+"
+fi
+
+# Add commit messages if available
+if [ -n "$COMMIT_MESSAGES" ]; then
+    PROMPT_PREFIX="${PROMPT_PREFIX}
+Commit History (showing development journey):
+$COMMIT_MESSAGES
+
+Please consider the commit history to understand what was tried, what issues were discovered, and how the solution evolved.
+
 "
 fi
 
