@@ -225,8 +225,9 @@ Focus on high-value issues. Style suggestions are welcome if impactful, but not 
 
 Review Structure:
 1. Start with a short overall feedback summary (1-2 sentences)
-2. Then provide detailed findings
-3. End with one of these verdicts ONLY:
+2. Always include a \"🔒 Security\" section. If no security concerns found, state \"No security concerns identified\"
+3. Then provide other detailed findings (performance, code quality, best practices, etc.)
+4. End with one of these verdicts ONLY:
    - \"✅ Approved\" (no issues found)
    - \"✅ Approved with recommendations\" (minor improvements suggested, but not blocking)
    - \"❌ Request changes\" (critical issues that must be fixed before merge)
