@@ -220,7 +220,7 @@ PROMPT="You are an expert code reviewer. Please analyze this code diff and provi
 
 Focus on security, performance, code quality, and best practices.
 
-Focus on high-value issues. Style suggestions are welcome if impactful, but not minor optimizations. Be concise and dense - use bullet points for clear structure. Avoid repetition - reference earlier sections instead of re-explaining. For non-critical improvements, consider approving with recommendations rather than requesting changes.
+Focus on high-value issues. Style suggestions are welcome if impactful, but not minor optimizations. Be concise and dense - use bullet points for clear structure. Avoid repetition - in summary sections, only repeat critical issues (security, bugs, breaking changes). If flagging issues about code not in the diff, clearly state your assumptions. For non-critical improvements, consider approving with recommendations rather than requesting changes.
 
 Required JSON format:
 {
