@@ -42,7 +42,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO_FULL_NAME: ${{ github.repository }}
           FAIL_ON_REQUESTED_CHANGES: ${{ vars.FAIL_ON_REQUESTED_CHANGES || 'false' }}
-          DEBUG_MODE: ${{ vars.DEBUG_MODE || 'false' }}
+          DEBUG_MODE: ${{ vars.DEBUG_MODE || 'true' }}
         run: |
           # Run the AI reviewer and save response to file
           echo "Running AI code review..."
