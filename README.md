@@ -3,7 +3,14 @@
 - Creates highly-customizable AI Reviews as PR comments.
 - Installation: Just 2 files copied to your repo and an OpenRouter API Key in your secrets.
 - Costs: $0.01 - $0.05 per review (even for large PRs with full context)
-- **Example output**: https://github.com/LearningCircuit/local-deep-research/pull/959#issuecomment-3445396169
+- **Example output**: https://github.com/LearningCircuit/local-deep-research/pull/1034#issuecomment-3508864021
+  - **Why this example is great**: This PR shows the AI reviewer's iterative improvement process catching critical bugs and quality issues:
+    - **Critical Bug Caught**: MODEL variable syntax error that would have silently failed in production
+    - **Architecture Improvements**: Pushed from GPU-base → CPU-base pattern and eliminated 130 lines of duplication
+    - **High-Priority Fixes**: Breaking change warnings, curl overwrite warnings, platform-specific gaps, nvidia-smi verification
+    - **Quality Enhancements**: Consistent formatting, better documentation, removed outdated comments
+    - **Final Approval**: After addressing all issues, the AI gave full approval - showing it doesn't infinitely continue
+    - **Real Value**: Saved shipping a critical bug and forced better architecture decisions
 
 This guide explains how to set up the automated AI PR review system using OpenRouter to analyze pull requests with your choice of AI model.
 
