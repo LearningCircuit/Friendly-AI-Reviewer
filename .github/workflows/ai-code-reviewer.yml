@@ -6,7 +6,7 @@ on:
 
 jobs:
   comprehensive-review:
-    name: ❤️ AI Code Review
+    name: AI Code Review
     runs-on: ubuntu-latest
     if: github.event.action == 'labeled' && github.event.label.name == 'ai_code_review'
     permissions:
