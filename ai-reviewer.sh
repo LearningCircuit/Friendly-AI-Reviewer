@@ -134,8 +134,12 @@ fi
 
 # Create the JSON request with proper escaping using jq
 # Write diff to temporary file to avoid "Argument list too long" error
-DIFF_FILE=$(mktemp)
-echo "$DIFF_CONTENT" > "$DIFF_FILE"
+DIFF_FILE=$(mktemp) || { echo "Failed to create temporary file for diff"; exit 1; }
+chmod 600 "$DIFF_FILE"
+echo "$DIFF_CONTENT" > "$DIFF_FILE" || { echo "Failed to write diff to temporary file"; rm -f "$DIFF_FILE"; exit 1; }
+
+# Set up trap to ensure temp file cleanup on exit/error
+trap 'rm -f "$DIFF_FILE"' EXIT
 
 # Build the user prompt using the diff file
 PROMPT_PREFIX="Please analyze this code diff and provide a comprehensive review in markdown format.
@@ -250,18 +254,22 @@ $PROMPT_PREFIX
 
 $DIFF_CONTENT"
 
-
-# Clean up diff file
-rm -f "$DIFF_FILE"
-
 # Make API call to OpenRouter with simple JSON
 # Use generic or repo-specific referer
 REFERER_URL="https://github.com/${REPO_FULL_NAME:-unknown/repo}"
 
 # Build JSON payload and pipe to curl to avoid "Argument list too long" error
+# Write prompt to temp file to avoid passing large content as command-line argument
+PROMPT_FILE=$(mktemp) || { echo "Failed to create temporary file for prompt"; exit 1; }
+chmod 600 "$PROMPT_FILE"
+echo "$PROMPT" > "$PROMPT_FILE" || { echo "Failed to write prompt to temporary file"; rm -f "$PROMPT_FILE"; exit 1; }
+
+# Update trap to cleanup both temp files
+trap 'rm -f "$DIFF_FILE" "$PROMPT_FILE"' EXIT
+
 JSON_PAYLOAD=$(jq -n \
     --arg model "$AI_MODEL" \
-    --arg content "$PROMPT" \
+    --rawfile content "$PROMPT_FILE" \
     --argjson temperature "$AI_TEMPERATURE" \
     --argjson max_tokens "$AI_MAX_TOKENS" \
     '{
