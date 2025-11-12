@@ -259,9 +259,13 @@ rm -f "$DIFF_FILE"
 REFERER_URL="https://github.com/${REPO_FULL_NAME:-unknown/repo}"
 
 # Build JSON payload and pipe to curl to avoid "Argument list too long" error
+# Write prompt to temp file to avoid passing large content as command-line argument
+PROMPT_FILE=$(mktemp)
+echo "$PROMPT" > "$PROMPT_FILE"
+
 JSON_PAYLOAD=$(jq -n \
     --arg model "$AI_MODEL" \
-    --arg content "$PROMPT" \
+    --rawfile content "$PROMPT_FILE" \
     --argjson temperature "$AI_TEMPERATURE" \
     --argjson max_tokens "$AI_MAX_TOKENS" \
     '{
@@ -275,6 +279,9 @@ JSON_PAYLOAD=$(jq -n \
       "temperature": $temperature,
       "max_tokens": $max_tokens
     }')
+
+# Clean up prompt file
+rm -f "$PROMPT_FILE"
 
 RESPONSE=$(echo "$JSON_PAYLOAD" | curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
     -H "Content-Type: application/json" \
