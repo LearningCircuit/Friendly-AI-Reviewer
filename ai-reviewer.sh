@@ -257,21 +257,30 @@ rm -f "$DIFF_FILE"
 # Make API call to OpenRouter with simple JSON
 # Use generic or repo-specific referer
 REFERER_URL="https://github.com/${REPO_FULL_NAME:-unknown/repo}"
-RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
+
+# Build JSON payload and pipe to curl to avoid "Argument list too long" error
+JSON_PAYLOAD=$(jq -n \
+    --arg model "$AI_MODEL" \
+    --arg content "$PROMPT" \
+    --argjson temperature "$AI_TEMPERATURE" \
+    --argjson max_tokens "$AI_MAX_TOKENS" \
+    '{
+      "model": $model,
+      "messages": [
+        {
+          "role": "user",
+          "content": $content
+        }
+      ],
+      "temperature": $temperature,
+      "max_tokens": $max_tokens
+    }')
+
+RESPONSE=$(echo "$JSON_PAYLOAD" | curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $API_KEY" \
     -H "HTTP-Referer: $REFERER_URL" \
-    -d "{
-      \"model\": \"$AI_MODEL\",
-      \"messages\": [
-        {
-          \"role\": \"user\",
-          \"content\": $(echo "$PROMPT" | jq -Rs .)
-        }
-      ],
-      \"temperature\": $AI_TEMPERATURE,
-      \"max_tokens\": $AI_MAX_TOKENS
-    }")
+    --data-binary @-)
 
 # Check if API call was successful
 if [ -z "$RESPONSE" ]; then
