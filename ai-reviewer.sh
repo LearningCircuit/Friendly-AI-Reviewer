@@ -95,26 +95,32 @@ fi
 AVAILABLE_LABELS=""
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     # Fetch all labels from the repository
-    echo "🔍 Fetching available labels from repository..." >&2
+    if [ "$DEBUG_MODE" = "true" ]; then
+        echo "🔍 Fetching available labels from repository..." >&2
+    fi
     AVAILABLE_LABELS=$(gh api "repos/$REPO_FULL_NAME/labels" --paginate 2>/dev/null \
         --jq '.[] | "- **\(.name)**: \(.description // "No description") (color: #\(.color))"' || echo "")
 
-    if [ -n "$AVAILABLE_LABELS" ]; then
-        LABEL_COUNT=$(echo "$AVAILABLE_LABELS" | wc -l)
-        echo "✅ Successfully fetched $LABEL_COUNT labels from repository" >&2
-    else
-        echo "ℹ️  No existing labels found in repository or API call failed" >&2
+    if [ "$DEBUG_MODE" = "true" ]; then
+        if [ -n "$AVAILABLE_LABELS" ]; then
+            LABEL_COUNT=$(echo "$AVAILABLE_LABELS" | wc -l)
+            echo "✅ Successfully fetched $LABEL_COUNT labels from repository" >&2
+        else
+            echo "ℹ️  No existing labels found in repository or API call failed" >&2
+        fi
     fi
 fi
 
 # Fetch PR title and description
 PR_DESCRIPTION=""
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    echo "🔍 Fetching PR title and description..." >&2
+    if [ "$DEBUG_MODE" = "true" ]; then
+        echo "🔍 Fetching PR title and description..." >&2
+    fi
     PR_DESCRIPTION=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" \
         --jq '"**PR Title**: " + .title + "\n\n**Description**:\n" + (.body // "No description provided")' 2>/dev/null | head -c 2000 || echo "")
 
-    if [ -n "$PR_DESCRIPTION" ]; then
+    if [ "$DEBUG_MODE" = "true" ] && [ -n "$PR_DESCRIPTION" ]; then
         echo "✅ Successfully fetched PR description" >&2
     fi
 fi
@@ -122,11 +128,13 @@ fi
 # Fetch commit messages (limit to 15 most recent, exclude merges)
 COMMIT_MESSAGES=""
 if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    echo "🔍 Fetching commit messages..." >&2
+    if [ "$DEBUG_MODE" = "true" ]; then
+        echo "🔍 Fetching commit messages..." >&2
+    fi
     COMMIT_MESSAGES=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER/commits" --paginate \
         --jq '[.[] | select(.commit.message | startswith("Merge") | not)] | .[-15:] | .[] | "- " + (.commit.message | split("\n")[0]) + (if (.commit.message | split("\n\n")[1]) then "\n  " + (.commit.message | split("\n\n")[1]) else "" end)' 2>/dev/null | head -c 2500 || echo "")
 
-    if [ -n "$COMMIT_MESSAGES" ]; then
+    if [ "$DEBUG_MODE" = "true" ] && [ -n "$COMMIT_MESSAGES" ]; then
         COMMIT_COUNT=$(echo "$COMMIT_MESSAGES" | grep -c "^- " || echo "0")
         echo "✅ Successfully fetched $COMMIT_COUNT commit messages" >&2
     fi
