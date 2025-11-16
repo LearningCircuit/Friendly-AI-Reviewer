@@ -49,7 +49,7 @@ jobs:
 
           # Temporarily disable errexit to capture errors properly
           set +e
-          AI_RESPONSE=$(cat diff.txt | bash ai-reviewer.sh 2>&1)
+          AI_RESPONSE=$(cat diff.txt | bash ai-reviewer.sh)
           EXIT_CODE=$?
           set -e
 
@@ -76,29 +76,8 @@ jobs:
             exit 1
           fi
 
-          # Extract only the JSON part (find the last valid JSON object in output)
-          # This handles debug output being mixed with the JSON response
-          # Try to find JSON by looking for lines starting with { and ending with }
-          AI_JSON=$(echo "$AI_RESPONSE" | awk '/^{$/,/^}$/{print}' | tail -n +1)
-
-          # If that didn't work, try extracting just the last line that looks like JSON
-          if [ -z "$AI_JSON" ] || ! echo "$AI_JSON" | jq . >/dev/null 2>&1; then
-            # Try to extract the last complete JSON object using perl
-            AI_JSON=$(echo "$AI_RESPONSE" | perl -0777 -ne 'print $1 if /(\{(?:[^{}]|(?R))*\})[^\{]*$/s' | tail -c 1000000)
-          fi
-
-          if [ -z "$AI_JSON" ]; then
-            echo "⚠️ Could not extract JSON from AI response."
-            if [ "$DEBUG_MODE" = "true" ]; then
-              echo "=== DEBUG: Full response (first 3000 chars) ==="
-              echo "$AI_RESPONSE" | head -c 3000
-              echo "=== END DEBUG ==="
-            fi
-            exit 1
-          fi
-
           # Parse JSON response
-          if ! echo "$AI_JSON" | jq . >/dev/null 2>&1; then
+          if ! echo "$AI_RESPONSE" | jq . >/dev/null 2>&1; then
             echo "⚠️ AI response is not valid JSON. Cannot process review."
 
             # Log raw response for debugging (redact sensitive info)
@@ -124,9 +103,9 @@ jobs:
           fi
 
           # Extract fields from JSON
-          REVIEW=$(echo "$AI_JSON" | jq -r '.review // "No review provided"')
-          DECISION=$(echo "$AI_JSON" | jq -r '.fail_pass_workflow // "uncertain"' | tr -d '\n\r' | xargs)
-          LABELS=$(echo "$AI_JSON" | jq -r '.labels_added[]? // empty')
+          REVIEW=$(echo "$AI_RESPONSE" | jq -r '.review // "No review provided"')
+          DECISION=$(echo "$AI_RESPONSE" | jq -r '.fail_pass_workflow // "uncertain"' | tr -d '\n\r' | xargs)
+          LABELS=$(echo "$AI_RESPONSE" | jq -r '.labels_added[]? // empty')
 
           # Post the review as PR comment
           echo "$REVIEW" | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} -F -
