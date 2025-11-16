@@ -29,8 +29,16 @@ fi
 AI_MODEL="${AI_MODEL:-moonshotai/kimi-k2-thinking}"
 AI_TEMPERATURE="${AI_TEMPERATURE:-0.1}"
 AI_MAX_TOKENS="${AI_MAX_TOKENS:-64000}"
-MAX_DIFF_SIZE="${MAX_DIFF_SIZE:-800000}"  # 800KB default limit (~200K tokens, matching model context size)
+MAX_DIFF_SIZE="${MAX_DIFF_SIZE:-5000000}"  # 5MB default limit (allows large PRs while preventing excessive API usage)
 EXCLUDE_FILE_PATTERNS="${EXCLUDE_FILE_PATTERNS:-*.lock,*.min.js,*.min.css,package-lock.json,yarn.lock}"
+
+# Context inclusion options (set to 'false' to disable, reduces token usage)
+INCLUDE_PREVIOUS_REVIEWS="${INCLUDE_PREVIOUS_REVIEWS:-true}"
+INCLUDE_HUMAN_COMMENTS="${INCLUDE_HUMAN_COMMENTS:-true}"
+INCLUDE_CHECK_RUNS="${INCLUDE_CHECK_RUNS:-true}"
+INCLUDE_LABELS="${INCLUDE_LABELS:-true}"
+INCLUDE_PR_DESCRIPTION="${INCLUDE_PR_DESCRIPTION:-true}"
+INCLUDE_COMMIT_MESSAGES="${INCLUDE_COMMIT_MESSAGES:-true}"
 
 # Read diff content from stdin
 DIFF_CONTENT=$(cat)
@@ -64,7 +72,7 @@ fi
 
 # Fetch previous AI review (only the most recent one) for context
 PREVIOUS_REVIEWS=""
-if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+if [ "$INCLUDE_PREVIOUS_REVIEWS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     # Fetch only the most recent AI review comment
     PREVIOUS_REVIEWS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
         --jq '[.[] | select(.body | startswith("## AI Code Review"))] | last | if . then "### Previous AI Review (" + .created_at + "):\n" + .body + "\n---\n" else "" end' 2>/dev/null | head -c 10000 || echo "")
@@ -72,7 +80,7 @@ fi
 
 # Fetch human comments for context
 HUMAN_COMMENTS=""
-if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     # Fetch comments from humans (not the bot)
     HUMAN_COMMENTS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
         --jq '[.[] | select(.body | startswith("## AI Code Review") | not)] | map("**" + .user.login + "** (" + .created_at + "):\n" + .body) | join("\n\n---\n\n")' 2>/dev/null | head -c 20000 || echo "")
@@ -80,7 +88,7 @@ fi
 
 # Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set)
 CHECK_RUNS_STATUS=""
-if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+if [ "$INCLUDE_CHECK_RUNS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     # Get the head SHA of the PR
     HEAD_SHA=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" --jq '.head.sha' 2>/dev/null || echo "")
 
@@ -93,7 +101,7 @@ fi
 
 # Fetch available repository labels (if PR_NUMBER and REPO_FULL_NAME are set)
 AVAILABLE_LABELS=""
-if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+if [ "$INCLUDE_LABELS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     # Fetch all labels from the repository
     if [ "$DEBUG_MODE" = "true" ]; then
         echo "🔍 Fetching available labels from repository..." >&2
@@ -113,7 +121,7 @@ fi
 
 # Fetch PR title and description
 PR_DESCRIPTION=""
-if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+if [ "$INCLUDE_PR_DESCRIPTION" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     if [ "$DEBUG_MODE" = "true" ]; then
         echo "🔍 Fetching PR title and description..." >&2
     fi
@@ -127,7 +135,7 @@ fi
 
 # Fetch commit messages (limit to 15 most recent, exclude merges)
 COMMIT_MESSAGES=""
-if [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+if [ "$INCLUDE_COMMIT_MESSAGES" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     if [ "$DEBUG_MODE" = "true" ]; then
         echo "🔍 Fetching commit messages..." >&2
     fi
