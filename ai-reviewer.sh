@@ -26,7 +26,7 @@ if [ -z "$API_KEY" ]; then
 fi
 
 # Configuration with defaults
-AI_MODEL="${AI_MODEL:-moonshotai/kimi-k2-thinking}"
+AI_MODEL="${AI_MODEL:-minimax/minimax-m2.5}"
 AI_TEMPERATURE="${AI_TEMPERATURE:-0.1}"
 AI_MAX_TOKENS="${AI_MAX_TOKENS:-64000}"
 MAX_DIFF_SIZE="${MAX_DIFF_SIZE:-5000000}"  # 5MB default limit (allows large PRs while preventing excessive API usage)
