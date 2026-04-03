@@ -17,6 +17,7 @@ This guide explains how to set up the automated AI PR review system using OpenRo
 ## What's New
 
 **Latest Updates:**
+- **Multi-Model Reviews**: Run multiple AI models in parallel, then aggregate their reviews into one synthesized result. Individual model reviews are included in collapsible `<details>` sections.
 - **Thinking Model Support**: Now supports advanced reasoning models like Kimi K2 that use `<thinking>` tags
 - **Rich Context**: Includes PR descriptions, commit messages, and human comments for comprehensive reviews
 - **Higher Token Limits**: Default 64k tokens for complete reviews without truncation
@@ -75,6 +76,29 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
 - **DEBUG_MODE**: Enable debug logging (default: `false`)
   - ⚠️ Warning: Exposes code diff in workflow logs when enabled
   - Only enable temporarily for troubleshooting
+
+### Multi-Model Configuration
+
+You can configure multiple AI models to review code in parallel, with an aggregator model synthesizing their outputs into a single review. Set these repository variables in **Settings** → **Secrets and variables** → **Actions** → **Variables**:
+
+- **AI_MODELS**: Comma-separated list of reviewer models (e.g., `deepseek/deepseek-r1-0528,google/gemini-2.5-flash,anthropic/claude-sonnet-4`)
+  - When empty (default), uses single-model mode with `AI_MODEL`
+  - All models run in parallel for speed
+- **AI_AGGREGATOR_MODEL**: Model used to synthesize individual reviews (default: first model in `AI_MODELS`)
+  - Can be the same model as one of the reviewers
+- **AI_AGGREGATOR_TEMPERATURE**: Temperature for the aggregator call (default: `0.1`)
+- **AI_AGGREGATOR_MAX_TOKENS**: Max tokens for the aggregator response (default: `64000`)
+
+**Example multi-model setup:**
+
+| Variable | Value |
+|---|---|
+| `AI_MODELS` | `deepseek/deepseek-r1-0528,google/gemini-2.5-flash` |
+| `AI_AGGREGATOR_MODEL` | `anthropic/claude-sonnet-4` |
+
+This would run DeepSeek R1 and Gemini 2.5 Flash in parallel, then have Claude Sonnet 4 synthesize their reviews.
+
+**Cost note**: Costs scale linearly with reviewer count plus one aggregator call. For example, 3 reviewer models + 1 aggregator = ~4x the cost of a single-model review.
 
 ## Usage
 
