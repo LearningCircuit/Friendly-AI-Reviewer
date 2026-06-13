@@ -72,6 +72,10 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
   - For large PRs with thinking models, this prevents cut-off responses
   - Adjust lower for cost savings on smaller PRs
 - **MAX_DIFF_SIZE**: Maximum diff size in bytes (default: `800000` / 800KB)
+- **STRUCTURED_OUTPUT**: Enforce a JSON Schema on the model's output via OpenRouter structured outputs (default: `true`)
+  - Makes the provider emit valid, correctly-escaped JSON instead of the model hand-writing it — the main cause of "Invalid JSON response from AI model"
+  - Requires a model/provider that supports `response_format` json_schema (most modern models do; e.g. Kimi K2, MiniMax M2.5)
+  - Set to `false` only if your chosen model doesn't support structured outputs
 - **DEBUG_MODE**: Enable debug logging (default: `false`)
   - ⚠️ Warning: Exposes code diff in workflow logs when enabled
   - Only enable temporarily for troubleshooting
