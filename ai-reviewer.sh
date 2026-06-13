@@ -32,6 +32,14 @@ AI_MAX_TOKENS="${AI_MAX_TOKENS:-64000}"
 MAX_DIFF_SIZE="${MAX_DIFF_SIZE:-5000000}"  # 5MB default limit (allows large PRs while preventing excessive API usage)
 EXCLUDE_FILE_PATTERNS="${EXCLUDE_FILE_PATTERNS:-*.lock,*.min.js,*.min.css,package-lock.json,yarn.lock}"
 
+# Ask OpenRouter to enforce a JSON Schema on the model's output (structured
+# outputs). This makes the *provider* emit valid, correctly-escaped JSON rather
+# than the model hand-writing a JSON string around a large markdown blob — the
+# main source of "Invalid JSON response from AI model" failures. Supported by
+# modern models (kimi-k2-*, minimax-m2.5, gpt-*, etc.); set to "false" only for
+# a model/provider that does not support response_format json_schema.
+STRUCTURED_OUTPUT="${STRUCTURED_OUTPUT:-true}"
+
 # Context inclusion options (set to 'false' to disable, reduces token usage)
 INCLUDE_PREVIOUS_REVIEWS="${INCLUDE_PREVIOUS_REVIEWS:-true}"
 INCLUDE_HUMAN_COMMENTS="${INCLUDE_HUMAN_COMMENTS:-true}"
@@ -283,11 +291,40 @@ echo "$PROMPT" > "$PROMPT_FILE" || { echo "Failed to write prompt to temporary f
 # Update trap to cleanup both temp files
 trap 'rm -f "$DIFF_FILE" "$PROMPT_FILE"' EXIT
 
+# When structured output is enabled, constrain the response to our JSON schema.
+# require_parameters tells OpenRouter to only route to providers that actually
+# honor response_format, so we fail loudly rather than silently get free-form
+# text from a non-supporting provider.
+RESPONSE_FORMAT_ARG='{}'
+if [ "$STRUCTURED_OUTPUT" = "true" ]; then
+    RESPONSE_FORMAT_ARG='{
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "code_review",
+          "strict": true,
+          "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["review", "fail_pass_workflow", "labels_added"],
+            "properties": {
+              "review": { "type": "string" },
+              "fail_pass_workflow": { "type": "string", "enum": ["pass", "fail", "uncertain"] },
+              "labels_added": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      },
+      "provider": { "require_parameters": true }
+    }'
+fi
+
 JSON_PAYLOAD=$(jq -n \
     --arg model "$AI_MODEL" \
     --rawfile content "$PROMPT_FILE" \
     --argjson temperature "$AI_TEMPERATURE" \
     --argjson max_tokens "$AI_MAX_TOKENS" \
+    --argjson response_format "$RESPONSE_FORMAT_ARG" \
     '{
       "model": $model,
       "messages": [
@@ -298,7 +335,7 @@ JSON_PAYLOAD=$(jq -n \
       ],
       "temperature": $temperature,
       "max_tokens": $max_tokens
-    }')
+    } + $response_format')
 
 RESPONSE=$(echo "$JSON_PAYLOAD" | curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
     -H "Content-Type: application/json" \
@@ -334,6 +371,10 @@ fi
 # Extract the content
 CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "error"')
 
+# Capture finish_reason so a truncated completion can be reported distinctly
+# from genuinely malformed output (the remedies differ).
+FINISH_REASON=$(echo "$RESPONSE" | jq -r '.choices[0].finish_reason // ""')
+
 # Log the extracted content from thinking model (if debug mode enabled)
 if [ "$DEBUG_MODE" = "true" ]; then
     echo "=== CONTENT DEBUG: Extracted from $AI_MODEL ===" >&2
@@ -363,6 +404,15 @@ if [ "$CONTENT" = "error" ]; then
         echo "API Error code: $ERROR_CODE" >&2
     fi
     exit 1
+fi
+
+# A truncated completion (model hit max_tokens) leaves incomplete or empty
+# content — common with reasoning models whose chain-of-thought consumes the
+# token budget on large diffs. Report it specifically: the remedy is to raise
+# AI_MAX_TOKENS or shrink the diff, not to re-run the same request.
+if [ "$FINISH_REASON" = "length" ]; then
+    generate_error_response "AI response was truncated before it finished (finish_reason=length, max_tokens=$AI_MAX_TOKENS). For reasoning models the chain-of-thought can consume the whole budget on large diffs — increase AI_MAX_TOKENS or reduce the diff size."
+    exit 0
 fi
 
 # Ensure CONTENT is not empty
