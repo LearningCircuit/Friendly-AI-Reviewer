@@ -221,7 +221,10 @@ fi
 # hit the same endpoint twice on every review.
 PR_JSON=""
 if { [ "$INCLUDE_CHECK_RUNS" = "true" ] || [ "$INCLUDE_PR_DESCRIPTION" = "true" ]; } && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    PR_JSON=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" 2>/dev/null || echo "")
+    if ! PR_JSON=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" 2>/dev/null); then
+        echo "⚠️  PR object fetch failed; continuing without PR description and CI status" >&2
+        PR_JSON=""
+    fi
 fi
 
 # Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set).

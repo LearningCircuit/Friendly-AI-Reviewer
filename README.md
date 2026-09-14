@@ -197,7 +197,7 @@ The workflow fetches and sends these repository elements to the AI:
 3. **Commit Messages**: Up to `MAX_COMMIT_MESSAGES` most recent commit messages (default 3, excluding merges), plus a compact overview stating how many commits are already on the PR, the per-author commit counts, and each author's added/removed line totals (covering up to `MAX_SUMMARY_COMMITS` most recent commits, default 15)
 4. **Human Comments**: Comments from human reviewers on the PR, fetched across all pages (not just the first 30), newest first; bot comments are excluded, while human comments quoting a review header or marker are retained. Caps (`MAX_HUMAN_COMMENTS`, `MAX_HUMAN_COMMENT_LENGTH`, `MAX_HUMAN_COMMENTS_TOTAL`) clip the oldest first and mark any truncation.
 5. **Labels**: All repository labels with descriptions and colors (kept complete on purpose; the prompt instructs the model to only apply genuinely useful ones)
-6. **Previous AI Review**: Most recent bot-authored AI review comment only (limited to 10k chars), identified by its review header or `<!-- ai-code-review:sticky -->` marker
+6. **Previous AI Review**: Most recent bot-authored AI review comment only (limited to 10,000 bytes, marked when truncated), identified by its review header or `<!-- ai-code-review:sticky -->` marker
 7. **CI/CD Status**: A one-line summary of GitHub Actions check runs ("N of M checks passed") plus only the non-passing runs — failures, skipped, cancelled, timed out, or still running — listed individually (capped at 20 lines with a "+K more" line); fully green matrix shards no longer flood the prompt
 8. **PR Metadata**: Pull request details, head SHA, repository information
 9. **Files**: May include sensitive configuration files, keys, or credentials
