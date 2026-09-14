@@ -354,7 +354,12 @@ if [ "$INCLUDE_COMMIT_MESSAGES" = "true" ] && [ "$COMMITS_JSON" != "[]" ] && [ "
     COMMIT_MESSAGES_FULL=$(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_COMMIT_MESSAGES" \
         "$COMMIT_CLASSIFIERS"'[.[] | select(is_merge | not)]
          | if $n > 0 then .[-$n:] else [] end
-         | .[] | "- " + (.commit.message | split("\n")[0]) + (if (.commit.message | split("\n\n")[1]) then "\n  " + (.commit.message | split("\n\n")[1]) else "" end)' 2>/dev/null || echo "")
+         | .[] | (.commit.message // "") as $message
+         | ($message | split("\n")[0]) as $subject
+         | (if ($message | contains("\n"))
+            then ($message | sub("^[^\n]*\n+"; "") | split("\n") | map("  " + .) | join("\n"))
+            else "" end) as $body
+         | "- " + $subject + (if $body != "" then "\n" + $body else "" end)' 2>/dev/null || echo "")
     COMMIT_MESSAGES=$(printf '%s' "$COMMIT_MESSAGES_FULL" | head -c 2500 | strip_partial_utf8)
     # Same contract as the human-comments budget: detect clipping from the
     # source length and mark it, so the model knows messages were cut.
@@ -434,6 +439,9 @@ if [ "$INCLUDE_COMMIT_SUMMARY" = "true" ] && [ -n "$COMMITS_JSON" ] && [ "$COMMI
         [ "$STATS_FAILURES" -gt 0 ] && SUMMARY_HEADER="$SUMMARY_HEADER (line stats unavailable for $STATS_FAILURES commit(s))"
         if [ -n "$AUTHOR_LINES" ]; then
             LISTED=$(( MAX_SUMMARY_COMMITS < NONMERGE_COUNT ? MAX_SUMMARY_COMMITS : NONMERGE_COUNT ))
+            # Operator-visible signal so "rate limited" is distinguishable
+            # from "one flaky fetch" when the header reports gaps.
+            [ "$STATS_FAILURES" -gt 0 ] && echo "⚠️  Line stats unavailable for $STATS_FAILURES of $LISTED listed commit(s)" >&2
             [ "$LISTED" -eq "$NONMERGE_COUNT" ] \
                 && SCOPE="across all $NONMERGE_COUNT $COMMIT_WORD" \
                 || SCOPE="across the $LISTED most recent of $NONMERGE_COUNT $COMMIT_WORD"
@@ -477,7 +485,7 @@ if [ -n "$CHECK_RUNS_STATUS" ]; then
 GitHub Actions Check Status:
 $CHECK_RUNS_STATUS
 
-Please consider any failed or pending checks in your review. If tests are failing, investigate whether the code changes might be the cause.
+Please consider any failed or pending checks in your review, and treat skipped and neutral runs as informational rather than failures. If tests are failing, investigate whether the code changes might be the cause.
 "
 fi
 

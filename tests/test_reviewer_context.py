@@ -71,7 +71,9 @@ class ReviewerRequestTests(unittest.TestCase):
             )
             (path / "commit-stats.json").write_text(json.dumps(commit_stats or {}))
             (path / "pr.json").write_text(json.dumps(
-                pr if pr is not None else {"number": 123, "head": {"sha": "abc"}}
+                pr if pr is not None
+                else {"number": 123, "head": {"sha": "abc"},
+                      "title": "Example PR", "body": "Example body"}
             ))
             if fail_comments:
                 (path / "fail-comments").write_text("")
@@ -611,6 +613,44 @@ print((path / "response.json").read_text())
         )
         prompt = request["messages"][0]["content"]
         self.assertIn("- subject line\n  body paragraph", prompt)
+
+    def test_commit_message_body_keeps_all_paragraphs(self):
+        commits = [pull_commit("c1", "subject\n\nfirst paragraph\n\nsecond paragraph", login="alice")]
+        request = self.run_reviewer(
+            previous=False, human=False, pull_commits=commits,
+            config={"INCLUDE_COMMIT_MESSAGES": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("  first paragraph", prompt)
+        self.assertIn("  second paragraph", prompt)
+
+    def test_commit_message_body_without_blank_line_is_kept(self):
+        # Non-conforming message (no blank line after the subject): the body
+        # must not be silently dropped.
+        commits = [pull_commit("c1", "fix: thing\nDetails line", login="alice")]
+        request = self.run_reviewer(
+            previous=False, human=False, pull_commits=commits,
+            config={"INCLUDE_COMMIT_MESSAGES": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("- fix: thing\n  Details line", prompt)
+
+    def test_check_status_prompt_marks_neutral_informational(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            check_runs=[
+                {"name": "advisory", "status": "completed", "conclusion": "neutral"},
+                {"name": "lint", "status": "completed", "conclusion": "success"},
+            ],
+            config={"INCLUDE_CHECK_RUNS": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("1 of 2 checks passed. Non-passing checks:", prompt)
+        self.assertIn("- **advisory**: completed (neutral)", prompt)
+        self.assertIn(
+            "treat skipped and neutral runs as informational rather than failures",
+            prompt,
+        )
 
     def test_pr_description_clip_is_marked(self):
         request = self.run_reviewer(

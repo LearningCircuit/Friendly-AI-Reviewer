@@ -32,6 +32,9 @@ jobs:
 
       - name: AI Code Review
         env:
+          # The || fallbacks deliberately mirror the script's built-in
+          # defaults so this block documents every knob at the call site —
+          # keep them in sync when changing a script default.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           AI_MODEL: ${{ vars.AI_MODEL || 'z-ai/glm-5.3' }}
