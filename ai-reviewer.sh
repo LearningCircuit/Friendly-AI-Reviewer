@@ -130,38 +130,42 @@ def is_ai_review:
         startswith("## AI Code Review") or contains("<!-- ai-code-review:sticky -->"));
 '
 
-# Fetch previous AI review (only the most recent one) for context
-PREVIOUS_REVIEWS=""
-if [ "$INCLUDE_PREVIOUS_REVIEWS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    # Fetch only the most recent AI review comment
-    PREVIOUS_REVIEWS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
-        --jq "$COMMENT_CLASSIFIERS"'[.[] | select(is_ai_review)] | last | if . then "### Previous AI Review (" + .created_at + "):\n" + .body + "\n---\n" else "" end' 2>/dev/null | head -c 10000 || echo "")
+# Fetch the PR's comment list once, shared by the previous-AI-review and
+# human-comment context. --paginate is required: a plain gh api call returns
+# only the first page (GitHub default: 30 comments, oldest first), which on
+# busy PRs would silently hide the newest feedback. --paginate emits one JSON
+# array per page back to back, so slurp with jq -s and 'add' to merge them
+# into a single array before any slicing happens (the slice must NOT run
+# inside a gh api --jq filter — that would apply it per page).
+COMMENTS_JSON="[]"
+if { [ "$INCLUDE_PREVIOUS_REVIEWS" = "true" ] || [ "$INCLUDE_HUMAN_COMMENTS" = "true" ]; } && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+    COMMENTS_JSON=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" --paginate 2>/dev/null | jq -s 'add // []' || echo "[]")
 fi
 
-# Fetch human comments for context. Human comments are valuable, so the
-# defaults are generous and configurable (see MAX_HUMAN_COMMENTS et al.):
-# the newest MAX_HUMAN_COMMENTS comments are kept, presented newest-first so
-# an overall-budget clip drops the oldest of the selected — never the latest
-# feedback. Per-comment and overall clipping are marked as truncated.
-# Exclude all bot comments; previous AI reviews have their own context block.
+# Previous AI review (only the most recent one) for context. Selected from the
+# full merged comment list, so a sticky review beyond page one is still found.
+PREVIOUS_REVIEWS=""
+if [ "$INCLUDE_PREVIOUS_REVIEWS" = "true" ] && [ "$COMMENTS_JSON" != "[]" ]; then
+    PREVIOUS_REVIEWS=$(echo "$COMMENTS_JSON" | jq -r "$COMMENT_CLASSIFIERS"'[.[] | select(is_ai_review)] | last | if . then "### Previous AI Review (" + .created_at + "):\n" + .body + "\n---\n" else "" end' 2>/dev/null | head -c 10000 || echo "")
+fi
+
+# Human comments for context. Human comments are valuable, so the defaults
+# are generous and configurable (see MAX_HUMAN_COMMENTS et al.): the newest
+# MAX_HUMAN_COMMENTS comments are kept out of the FULL paginated list,
+# presented newest-first so an overall-budget clip drops the oldest of the
+# selected — never the latest feedback. Per-comment and overall clipping are
+# marked as truncated. Exclude all bot comments; previous AI reviews have
+# their own context block.
 HUMAN_COMMENTS=""
-if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ] && [ "$MAX_HUMAN_COMMENTS" -gt 0 ] && [ "$MAX_HUMAN_COMMENTS_TOTAL" -gt 0 ]; then
-    # A count cap of 0 selects nothing; jq's .[-0:] would mean "everything",
-    # so build the slice expression explicitly.
-    if [ "$MAX_HUMAN_COMMENTS" -gt 0 ]; then
-        COMMENT_SLICE=".[-$MAX_HUMAN_COMMENTS:]"
-    else
-        COMMENT_SLICE="[]"
-    fi
-    # Splicing shell variables into a gh api --jq filter is safe here because
-    # gh api has no --arg passthrough and every value above is validated as a
-    # non-negative integer before use.
-    HUMAN_COMMENTS_FULL=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
-        --jq "$COMMENT_CLASSIFIERS"'[.[] | select(is_bot | not)]
-            | '"$COMMENT_SLICE"' | reverse
+if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ "$COMMENTS_JSON" != "[]" ] && [ "$MAX_HUMAN_COMMENTS_TOTAL" -gt 0 ]; then
+    HUMAN_COMMENTS_FULL=$(echo "$COMMENTS_JSON" | jq -r \
+        --argjson n "$MAX_HUMAN_COMMENTS" --argjson c "$MAX_HUMAN_COMMENT_LENGTH" \
+        "$COMMENT_CLASSIFIERS"'[.[] | select(is_bot | not)]
+            | if $n > 0 then .[-$n:] else [] end
+            | reverse
             | map("**" + (.user.login // "unknown") + "** (" + .created_at + "):\n"
-                 + (if ((.body // "") | length) > '"$MAX_HUMAN_COMMENT_LENGTH"'
-                    then ((.body // "")[0:'"$MAX_HUMAN_COMMENT_LENGTH"'] + " […truncated]")
+                 + (if ((.body // "") | length) > $c
+                    then ((.body // "")[0:$c] + " […truncated]")
                     else (.body // "") end))
             | join("\n\n---\n\n")' 2>/dev/null || echo "")
     HUMAN_COMMENTS=$(printf '%s' "$HUMAN_COMMENTS_FULL" | head -c "$MAX_HUMAN_COMMENTS_TOTAL")
@@ -186,12 +190,15 @@ if [ "$INCLUDE_CHECK_RUNS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL
     HEAD_SHA=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" --jq '.head.sha' 2>/dev/null || echo "")
 
     if [ -n "$HEAD_SHA" ]; then
-        CHECK_RUNS_SUMMARY=$(gh api "repos/$REPO_FULL_NAME/commits/$HEAD_SHA/check-runs" \
-            --jq '(.check_runs // [])
-                  | {total: length,
-                     passed: [.[] | select(.conclusion == "success")] | length,
-                     other: [.[] | select(.conclusion != "success")
-                             | "- **\(.name)**: \(.status)\(if .conclusion then " (\(.conclusion))" else "" end)"]}' 2>/dev/null || echo "")
+        # Paginate (the endpoint returns 30 runs per page by default — big
+        # matrix repos exceed that) and merge the pages locally; the summary
+        # must see the full list, not page one.
+        CHECK_RUNS_JSON=$(gh api "repos/$REPO_FULL_NAME/commits/$HEAD_SHA/check-runs" --paginate 2>/dev/null | jq -s 'map(.check_runs // []) | add // []' || echo "[]")
+        CHECK_RUNS_SUMMARY=$(echo "$CHECK_RUNS_JSON" | jq \
+            '{total: length,
+              passed: [.[] | select(.conclusion == "success")] | length,
+              other: [.[] | select(.conclusion != "success")
+                      | "- **\(.name)**: \(.status)\(if .conclusion then " (\(.conclusion))" else "" end)"]}' 2>/dev/null || echo "")
 
         if [ -n "$CHECK_RUNS_SUMMARY" ] && [ "$CHECK_RUNS_SUMMARY" != "null" ]; then
             TOTAL_CHECKS=$(echo "$CHECK_RUNS_SUMMARY" | jq -r '.total // 0')
@@ -266,10 +273,17 @@ fi
 # cap compared to the overview statistic.
 COMMIT_MESSAGES=""
 if [ "$INCLUDE_COMMIT_MESSAGES" = "true" ] && [ "$COMMITS_JSON" != "[]" ] && [ "$COMMITS_JSON" != "" ]; then
-    COMMIT_MESSAGES=$(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_COMMIT_MESSAGES" \
+    COMMIT_MESSAGES_FULL=$(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_COMMIT_MESSAGES" \
         '[.[] | select(.commit.message | startswith("Merge") | not)]
          | if $n > 0 then .[-$n:] else [] end
-         | .[] | "- " + (.commit.message | split("\n")[0]) + (if (.commit.message | split("\n\n")[1]) then "\n  " + (.commit.message | split("\n\n")[1]) else "" end)' 2>/dev/null | head -c 2500 || echo "")
+         | .[] | "- " + (.commit.message | split("\n")[0]) + (if (.commit.message | split("\n\n")[1]) then "\n  " + (.commit.message | split("\n\n")[1]) else "" end)' 2>/dev/null || echo "")
+    COMMIT_MESSAGES=$(printf '%s' "$COMMIT_MESSAGES_FULL" | head -c 2500)
+    # Same contract as the human-comments budget: detect clipping from the
+    # source length and mark it, so the model knows messages were cut.
+    if [ "$(printf '%s' "$COMMIT_MESSAGES_FULL" | wc -c)" -gt 2500 ]; then
+        COMMIT_MESSAGES="$COMMIT_MESSAGES
+[…truncated at 2500 bytes]"
+    fi
 
     if [ "$DEBUG_MODE" = "true" ] && [ -n "$COMMIT_MESSAGES" ]; then
         COMMIT_COUNT=$(echo "$COMMIT_MESSAGES" | grep -c "^- " || echo "0")

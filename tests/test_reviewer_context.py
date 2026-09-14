@@ -88,10 +88,13 @@ with (path / "gh-calls.jsonl").open("a") as calls:
     calls.write(json.dumps(args) + "\\n")
 parts = args[1].split("?")[0].split("/")[3:]
 if parts == ["issues", "123", "comments"]:
-    assert args[2] == "--jq" and len(args) == 4, args
-    result = subprocess.run(["jq", "-r", args[3]],
-                            input=(path / "comments.json").read_text(), text=True)
-    sys.exit(result.returncode)
+    assert args[2:] == ["--paginate"], args
+    comments = json.loads((path / "comments.json").read_text())
+    # Emulate gh api --paginate: one JSON array per page, GitHub's default
+    # page size of 30, oldest first.
+    for start in range(0, len(comments), 30):
+        sys.stdout.write(json.dumps(comments[start:start + 30]))
+    sys.exit(0)
 if parts == ["pulls", "123", "commits"]:
     assert args[2:] == ["--paginate"], args
     sys.stdout.write((path / "pull-commits.json").read_text())
@@ -102,10 +105,14 @@ if parts == ["pulls", "123"]:
                             input=(path / "pr.json").read_text(), text=True)
     sys.exit(result.returncode)
 if parts == ["commits", "abc", "check-runs"]:
-    assert args[2] == "--jq" and len(args) == 4, args
-    result = subprocess.run(["jq", "-r", args[3]],
-                            input=(path / "check-runs.json").read_text(), text=True)
-    sys.exit(result.returncode)
+    assert args[2:] == ["--paginate"], args
+    document = json.loads((path / "check-runs.json").read_text())
+    runs = document["check_runs"]
+    for start in range(0, len(runs), 30):
+        sys.stdout.write(json.dumps(
+            {"total_count": len(runs), "check_runs": runs[start:start + 30]}
+        ))
+    sys.exit(0)
 if parts == ["labels"]:
     assert args[2:4] == ["--paginate", "--jq"] and len(args) == 5, args
     result = subprocess.run(["jq", "-r", args[4]],
@@ -161,12 +168,12 @@ print((path / "response.json").read_text())
             calls = calls_file.read_text().splitlines() if calls_file.exists() else []
             self.gh_calls = [json.loads(call) for call in calls]
             # Every call must belong to a known context feature, and the
-            # comment endpoint is still fetched exactly once per enabled
-            # comment feature (never per comment).
+            # comment list is fetched exactly once (shared by the previous-
+            # review and human-comment features) whenever either is enabled.
             categorized = (self.comment_calls() + self.commit_calls()
                            + self.check_calls() + self.label_calls())
             self.assertEqual(len(self.gh_calls), len(categorized))
-            self.assertEqual(len(self.comment_calls()), int(previous) + int(human))
+            self.assertEqual(len(self.comment_calls()), int(bool(previous or human)))
             return json.loads((path / "request.json").read_text())
 
     def comment_calls(self):
@@ -528,6 +535,57 @@ print((path / "response.json").read_text())
         )
         prompt = request["messages"][0]["content"]
         self.assertIn("[…truncated at 50 bytes]", prompt)
+
+    def test_human_comments_reach_beyond_the_first_page(self):
+        # GitHub's default page holds 30 comments, oldest first. The newest
+        # comments live on later pages; the selection must span all of them.
+        many = [comment(f"feedback number {index}", f"user-{index}", "User")
+                for index in range(1, 41)]
+        request = self.run_reviewer(many, previous=False,
+                                    config={"MAX_HUMAN_COMMENTS": "10"})
+        prompt = request["messages"][0]["content"]
+        self.assertIn("feedback number 40", prompt)
+        self.assertIn("feedback number 31", prompt)
+        self.assertNotIn("feedback number 30", prompt)
+        self.assertNotIn("feedback number 1", prompt)
+        # One shared paginated fetch, not one call per page or per feature.
+        self.assertEqual(len(self.comment_calls()), 1)
+        self.assertEqual(self.comment_calls()[0][2:], ["--paginate"])
+
+    def test_previous_review_found_beyond_the_first_page(self):
+        many = [comment(f"noise {index}", f"user-{index}", "User")
+                for index in range(35)]
+        sticky = comment(f"{MARKER}\nLatest AI review beyond page one")
+        request = self.run_reviewer(many + [sticky], human=False)
+        prompt = request["messages"][0]["content"]
+        self.assertIn("Latest AI review beyond page one", prompt)
+        self.assertNotIn("noise 0", prompt)
+
+    def test_commit_messages_clip_is_marked(self):
+        commits = [
+            pull_commit(f"c{i}", f"feat: {i}\n\n" + "m" * 1100, login="alice")
+            for i in range(3)
+        ]
+        request = self.run_reviewer(
+            previous=False, human=False, pull_commits=commits,
+            config={"INCLUDE_COMMIT_MESSAGES": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("[…truncated at 2500 bytes]", prompt)
+
+    def test_check_run_summary_spans_all_pages(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            check_runs=[
+                {"name": f"shard-{index}", "status": "completed", "conclusion": "success"}
+                for index in range(35)
+            ] + [{"name": "e2e", "status": "completed", "conclusion": "failure"}],
+            config={"INCLUDE_CHECK_RUNS": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("35 of 36 checks passed. Non-passing checks:", prompt)
+        self.assertIn("- **e2e**: completed (failure)", prompt)
+        self.assertNotIn("- **shard-0**", prompt)
 
 
 if __name__ == "__main__":
