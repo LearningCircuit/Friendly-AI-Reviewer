@@ -76,6 +76,9 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
 - **MAX_SUMMARY_COMMITS**: How many of the PR's most recent commits the commit overview reads (default: `15`; `0` shows the commit count only). The overview tells the model how many commits are already on the PR, who made them, and each author's added/removed line totals. Each summarized commit costs one extra GitHub API call, but only a handful of numbers enter the prompt, so this cap can stay generous.
 - **MAX_COMMIT_MESSAGES**: How many commit messages are fully quoted in the prompt (default: `3`). Fully quoted messages are the token-expensive part of the commit history, hence the separate, smaller cap — the overview (above) still covers many more commits.
 - **INCLUDE_COMMIT_SUMMARY**: Include the "There are X commits already on this PR" overview with per-author counts and line totals (default: `true`)
+- **MAX_HUMAN_COMMENTS**: How many of the newest human comments are included (default: `100`). Comments are presented newest-first, so when this or the overall budget clips, the oldest go first — the latest feedback always survives.
+- **MAX_HUMAN_COMMENT_LENGTH**: Maximum characters per human comment; longer comments are clipped and marked " […truncated]" (default: `4000`)
+- **MAX_HUMAN_COMMENTS_TOTAL**: Overall character budget for the human-comments block; when reached, the block is cut and marked (default: `20000`)
 - **STRUCTURED_OUTPUT**: Enforce a JSON Schema on the model's output via OpenRouter structured outputs (default: `true`)
   - Makes the provider emit valid, correctly-escaped JSON instead of the model hand-writing it — the main cause of "Invalid JSON response from AI model"
   - Requires a model/provider that supports `response_format` json_schema (most modern models do; e.g. Kimi K2, MiniMax M2.5)
@@ -192,10 +195,10 @@ The workflow fetches and sends these repository elements to the AI:
 1. **Code Changes**: Full diff of modified files
 2. **PR Description**: Title and description text from the pull request
 3. **Commit Messages**: Up to `MAX_COMMIT_MESSAGES` most recent commit messages (default 3, excluding merges), plus a compact overview stating how many commits are already on the PR, the per-author commit counts, and each author's added/removed line totals (covering up to `MAX_SUMMARY_COMMITS` most recent commits, default 15)
-4. **Human Comments**: Comments from human reviewers on the PR; bot comments are excluded, while human comments quoting a review header or marker are retained
-5. **Labels**: All repository labels with descriptions and colors
+4. **Human Comments**: Comments from human reviewers on the PR, newest first; bot comments are excluded, while human comments quoting a review header or marker are retained. Caps (`MAX_HUMAN_COMMENTS`, `MAX_HUMAN_COMMENT_LENGTH`, `MAX_HUMAN_COMMENTS_TOTAL`) clip the oldest first and mark any truncation.
+5. **Labels**: All repository labels with descriptions and colors (kept complete on purpose; the prompt instructs the model to only apply genuinely useful ones)
 6. **Previous AI Review**: Most recent bot-authored AI review comment only (limited to 10k chars), identified by its review header or `<!-- ai-code-review:sticky -->` marker
-7. **CI/CD Status**: GitHub Actions check runs and build statuses
+7. **CI/CD Status**: A one-line summary of GitHub Actions check runs ("N of M checks passed") plus only the non-passing runs — failures, skipped, cancelled, timed out, or still running — listed individually; fully green matrix shards no longer flood the prompt
 8. **PR Metadata**: Pull request details, head SHA, repository information
 9. **Files**: May include sensitive configuration files, keys, or credentials
 

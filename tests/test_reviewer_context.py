@@ -54,6 +54,8 @@ class ReviewerRequestTests(unittest.TestCase):
         config=None,
         pull_commits=None,
         commit_stats=None,
+        check_runs=None,
+        labels=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -62,6 +64,13 @@ class ReviewerRequestTests(unittest.TestCase):
                 json.dumps(pull_commits if pull_commits is not None else [])
             )
             (path / "commit-stats.json").write_text(json.dumps(commit_stats or {}))
+            (path / "pr.json").write_text(json.dumps(
+                {"number": 123, "head": {"sha": "abc"}}
+            ))
+            (path / "check-runs.json").write_text(json.dumps(
+                {"total_count": len(check_runs or []), "check_runs": check_runs or []}
+            ))
+            (path / "labels.json").write_text(json.dumps(labels or []))
             expected = response if response is not None else CLEAN_REVIEW
             (path / "response.json").write_text(json.dumps({
                 "choices": [{
@@ -87,6 +96,21 @@ if parts == ["pulls", "123", "commits"]:
     assert args[2:] == ["--paginate"], args
     sys.stdout.write((path / "pull-commits.json").read_text())
     sys.exit(0)
+if parts == ["pulls", "123"]:
+    assert args[2] == "--jq" and len(args) == 4, args
+    result = subprocess.run(["jq", "-r", args[3]],
+                            input=(path / "pr.json").read_text(), text=True)
+    sys.exit(result.returncode)
+if parts == ["commits", "abc", "check-runs"]:
+    assert args[2] == "--jq" and len(args) == 4, args
+    result = subprocess.run(["jq", "-r", args[3]],
+                            input=(path / "check-runs.json").read_text(), text=True)
+    sys.exit(result.returncode)
+if parts == ["labels"]:
+    assert args[2:4] == ["--paginate", "--jq"] and len(args) == 5, args
+    result = subprocess.run(["jq", "-r", args[4]],
+                            input=(path / "labels.json").read_text(), text=True)
+    sys.exit(result.returncode)
 if len(parts) == 2 and parts[0] == "commits":
     assert args[2] == "--jq" and len(args) == 4, args
     stats = json.loads((path / "commit-stats.json").read_text())
@@ -136,16 +160,42 @@ print((path / "response.json").read_text())
             calls_file = path / "gh-calls.jsonl"
             calls = calls_file.read_text().splitlines() if calls_file.exists() else []
             self.gh_calls = [json.loads(call) for call in calls]
-            self.assertEqual(
-                len(self.gh_calls), int(previous) + int(human) + len(self.commit_calls())
-            )
+            # Every call must belong to a known context feature, and the
+            # comment endpoint is still fetched exactly once per enabled
+            # comment feature (never per comment).
+            categorized = (self.comment_calls() + self.commit_calls()
+                           + self.check_calls() + self.label_calls())
+            self.assertEqual(len(self.gh_calls), len(categorized))
+            self.assertEqual(len(self.comment_calls()), int(previous) + int(human))
             return json.loads((path / "request.json").read_text())
+
+    def comment_calls(self):
+        """GitHub API calls made for comment context."""
+        return [
+            call for call in getattr(self, "gh_calls", [])
+            if "/issues/123/comments" in call[1]
+        ]
 
     def commit_calls(self):
         """GitHub API calls made for the commit history features."""
         return [
             call for call in getattr(self, "gh_calls", [])
-            if "pulls/123/commits" in call[1] or "/commits/" in call[1]
+            if "pulls/123/commits" in call[1]
+            or ("/commits/" in call[1] and "check-runs" not in call[1])
+        ]
+
+    def check_calls(self):
+        """GitHub API calls made for the check-runs context."""
+        return [
+            call for call in getattr(self, "gh_calls", [])
+            if call[1].endswith("/pulls/123") or call[1].endswith("/check-runs")
+        ]
+
+    def label_calls(self):
+        """GitHub API calls made for the label context."""
+        return [
+            call for call in getattr(self, "gh_calls", [])
+            if call[1].endswith("/labels")
         ]
 
     def test_concise_instructions_preserve_review_depth_and_protocol(self):
@@ -199,7 +249,7 @@ print((path / "response.json").read_text())
             for index, body in enumerate(bodies)
         ])
         prompt = request["messages"][0]["content"]
-        self.assertIn("Human Comments on this PR:", prompt)
+        self.assertIn("Human Comments on this PR (newest first):", prompt)
         self.assertNotIn("Previous AI Review (for context", prompt)
         for body in bodies:
             self.assertEqual(prompt.count(body), 1)
@@ -367,6 +417,88 @@ print((path / "response.json").read_text())
         prompt = request["messages"][0]["content"]
         self.assertIn("There is 1 commit already on this PR", prompt)
         self.assertIn("- **Dana D**: 1 commit, +4/-1 lines", prompt)
+
+    def test_check_runs_summarize_successes_and_list_non_passing(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            check_runs=[
+                {"name": "lint", "status": "completed", "conclusion": "success"},
+                {"name": "unit-tests (3/8)", "status": "completed", "conclusion": "success"},
+                {"name": "e2e-playwright", "status": "completed", "conclusion": "failure"},
+                {"name": "ui-shard-2", "status": "completed", "conclusion": "skipped"},
+                {"name": "docker-build", "status": "in_progress"},
+            ],
+            config={"INCLUDE_CHECK_RUNS": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("2 of 5 checks passed. Non-passing checks:", prompt)
+        self.assertIn("- **e2e-playwright**: completed (failure)", prompt)
+        self.assertIn("- **ui-shard-2**: completed (skipped)", prompt)
+        self.assertIn("- **docker-build**: in_progress", prompt)
+        # Successful runs (including matrix shards) collapse into the count.
+        self.assertNotIn("- **lint**", prompt)
+        self.assertNotIn("- **unit-tests", prompt)
+        self.assertEqual(len(self.check_calls()), 2)
+
+    def test_check_runs_all_passed_collapses_to_one_line(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            check_runs=[
+                {"name": "lint", "status": "completed", "conclusion": "success"},
+                {"name": "unit-tests", "status": "completed", "conclusion": "success"},
+            ],
+            config={"INCLUDE_CHECK_RUNS": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("All 2 checks passed.", prompt)
+        self.assertNotIn("Non-passing", prompt)
+        self.assertNotIn("- **lint**", prompt)
+
+    def test_labels_instruction_and_list_stay_complete(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            labels=[
+                {"name": "bug", "description": "Something is broken", "color": "d73a4a"},
+                {"name": "ui", "description": "Touches the web stack", "color": "0366d6"},
+            ],
+            config={"INCLUDE_LABELS": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("Only apply labels that are genuinely useful", prompt)
+        self.assertIn("add none rather than stretching a label to fit", prompt)
+        # The label list itself stays complete — no trimming of data.
+        self.assertIn("- **bug**: Something is broken (color: #d73a4a)", prompt)
+        self.assertIn("- **ui**: Touches the web stack (color: #0366d6)", prompt)
+
+    def test_human_comments_keep_newest_within_count_cap(self):
+        comments = [
+            comment("older feedback that must drop", "alice", "User"),
+            comment("newest feedback that must survive", "bob", "User"),
+        ]
+        request = self.run_reviewer(comments, previous=False,
+                                    config={"MAX_HUMAN_COMMENTS": "1"})
+        prompt = request["messages"][0]["content"]
+        self.assertIn("Human Comments on this PR (newest first):", prompt)
+        self.assertIn("newest feedback that must survive", prompt)
+        self.assertNotIn("older feedback that must drop", prompt)
+
+    def test_human_comment_length_cap_marks_truncation(self):
+        body = "x" * 30
+        request = self.run_reviewer(
+            [comment(body, "alice", "User")], previous=False,
+            config={"MAX_HUMAN_COMMENT_LENGTH": "10"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("x" * 10 + " […truncated]", prompt)
+        self.assertNotIn("x" * 11, prompt)
+
+    def test_human_comments_total_budget_marks_truncation(self):
+        request = self.run_reviewer(
+            [comment("y" * 60, "alice", "User")], previous=False,
+            config={"MAX_HUMAN_COMMENTS_TOTAL": "50"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("[…truncated at 50 characters]", prompt)
 
 
 if __name__ == "__main__":

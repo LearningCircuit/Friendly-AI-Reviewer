@@ -72,6 +72,24 @@ fi
 # MAX_SUMMARY_COMMITS for how many commits those cover).
 INCLUDE_COMMIT_SUMMARY="${INCLUDE_COMMIT_SUMMARY:-true}"
 
+# Human comments are high-value context, so these caps are deliberately
+# generous and each is configurable: how many of the newest comments are
+# kept, how long each may be, and the overall character budget for the
+# block. When a cap clips, the oldest of the selected comments go first and
+# the clip is marked so the model knows context was cut.
+MAX_HUMAN_COMMENTS="${MAX_HUMAN_COMMENTS:-100}"
+MAX_HUMAN_COMMENT_LENGTH="${MAX_HUMAN_COMMENT_LENGTH:-4000}"
+MAX_HUMAN_COMMENTS_TOTAL="${MAX_HUMAN_COMMENTS_TOTAL:-20000}"
+if ! [[ "$MAX_HUMAN_COMMENTS" =~ ^[0-9]+$ ]]; then
+    MAX_HUMAN_COMMENTS=100
+fi
+if ! [[ "$MAX_HUMAN_COMMENT_LENGTH" =~ ^[0-9]+$ ]]; then
+    MAX_HUMAN_COMMENT_LENGTH=4000
+fi
+if ! [[ "$MAX_HUMAN_COMMENTS_TOTAL" =~ ^[0-9]+$ ]]; then
+    MAX_HUMAN_COMMENTS_TOTAL=20000
+fi
+
 # Read diff content from stdin
 DIFF_CONTENT=$(cat)
 
@@ -120,24 +138,68 @@ if [ "$INCLUDE_PREVIOUS_REVIEWS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REP
         --jq "$COMMENT_CLASSIFIERS"'[.[] | select(is_ai_review)] | last | if . then "### Previous AI Review (" + .created_at + "):\n" + .body + "\n---\n" else "" end' 2>/dev/null | head -c 10000 || echo "")
 fi
 
-# Fetch human comments for context
+# Fetch human comments for context. Human comments are valuable, so the
+# defaults are generous and configurable (see MAX_HUMAN_COMMENTS et al.):
+# the newest MAX_HUMAN_COMMENTS comments are kept, presented newest-first so
+# an overall-budget clip drops the oldest of the selected — never the latest
+# feedback. Per-comment and overall clipping are marked as truncated.
+# Exclude all bot comments; previous AI reviews have their own context block.
 HUMAN_COMMENTS=""
-if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    # Exclude all bot comments; previous AI reviews have their own context block.
-    HUMAN_COMMENTS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
-        --jq "$COMMENT_CLASSIFIERS"'[.[] | select(is_bot | not)] | map("**" + .user.login + "** (" + .created_at + "):\n" + .body) | join("\n\n---\n\n")' 2>/dev/null | head -c 20000 || echo "")
+if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ] && [ "$MAX_HUMAN_COMMENTS" -gt 0 ] && [ "$MAX_HUMAN_COMMENTS_TOTAL" -gt 0 ]; then
+    # A count cap of 0 selects nothing; jq's .[-0:] would mean "everything",
+    # so build the slice expression explicitly.
+    if [ "$MAX_HUMAN_COMMENTS" -gt 0 ]; then
+        COMMENT_SLICE=".[-$MAX_HUMAN_COMMENTS:]"
+    else
+        COMMENT_SLICE="[]"
+    fi
+    HUMAN_COMMENTS_FULL=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
+        --jq "$COMMENT_CLASSIFIERS"'[.[] | select(is_bot | not)]
+            | '"$COMMENT_SLICE"' | reverse
+            | map("**" + (.user.login // "unknown") + "** (" + .created_at + "):\n"
+                 + (if ((.body // "") | length) > '"$MAX_HUMAN_COMMENT_LENGTH"'
+                    then ((.body // "")[0:'"$MAX_HUMAN_COMMENT_LENGTH"'] + " […truncated]")
+                    else (.body // "") end))
+            | join("\n\n---\n\n")' 2>/dev/null || echo "")
+    HUMAN_COMMENTS=$(printf '%s' "$HUMAN_COMMENTS_FULL" | head -c "$MAX_HUMAN_COMMENTS_TOTAL")
+    if [ "$(printf '%s' "$HUMAN_COMMENTS" | wc -c)" -eq "$MAX_HUMAN_COMMENTS_TOTAL" ]; then
+        HUMAN_COMMENTS="$HUMAN_COMMENTS
+[…truncated at $MAX_HUMAN_COMMENTS_TOTAL characters]"
+    fi
 fi
 
-# Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set)
+# Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set).
+# Successful checks are collapsed into a one-line count; every non-passing run
+# (failure, skipped, cancelled, timed out, still running) is listed
+# individually — green matrix shards must not flood the prompt, but skipped
+# runs can matter, so they stay visible.
 CHECK_RUNS_STATUS=""
 if [ "$INCLUDE_CHECK_RUNS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     # Get the head SHA of the PR
     HEAD_SHA=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" --jq '.head.sha' 2>/dev/null || echo "")
 
     if [ -n "$HEAD_SHA" ]; then
-        # Fetch check runs for this commit
-        CHECK_RUNS_STATUS=$(gh api "repos/$REPO_FULL_NAME/commits/$HEAD_SHA/check-runs" \
-            --jq '.check_runs // [] | .[] | "- **\(.name)**: \(.status)\(if .conclusion then " (\(.conclusion))" else "" end)"' 2>/dev/null || echo "")
+        CHECK_RUNS_SUMMARY=$(gh api "repos/$REPO_FULL_NAME/commits/$HEAD_SHA/check-runs" \
+            --jq '(.check_runs // [])
+                  | {total: length,
+                     passed: [.[] | select(.conclusion == "success")] | length,
+                     other: [.[] | select(.conclusion != "success")
+                             | "- **\(.name)**: \(.status)\(if .conclusion then " (\(.conclusion))" else "" end)"]}' 2>/dev/null || echo "")
+
+        if [ -n "$CHECK_RUNS_SUMMARY" ] && [ "$CHECK_RUNS_SUMMARY" != "null" ]; then
+            TOTAL_CHECKS=$(echo "$CHECK_RUNS_SUMMARY" | jq -r '.total // 0')
+            PASSED_CHECKS=$(echo "$CHECK_RUNS_SUMMARY" | jq -r '.passed // 0')
+            OTHER_CHECKS=$(echo "$CHECK_RUNS_SUMMARY" | jq -r 'if .other then .other | join("\n") else "" end')
+
+            if [ "$TOTAL_CHECKS" -gt 0 ]; then
+                if [ -n "$OTHER_CHECKS" ]; then
+                    CHECK_RUNS_STATUS="$PASSED_CHECKS of $TOTAL_CHECKS checks passed. Non-passing checks:
+$OTHER_CHECKS"
+                else
+                    CHECK_RUNS_STATUS="All $TOTAL_CHECKS checks passed."
+                fi
+            fi
+        fi
     fi
 fi
 
@@ -305,7 +367,7 @@ fi
 if [ -n "$AVAILABLE_LABELS" ]; then
     PROMPT_PREFIX="${PROMPT_PREFIX}
 Available Repository Labels:
-Please prefer using existing labels from this list over creating new ones:
+Prefer existing labels from this list over creating new ones. Only apply labels that are genuinely useful for these changes — when unsure, add none rather than stretching a label to fit:
 $AVAILABLE_LABELS
 
 If none of these labels are appropriate for the changes, you may suggest new ones.
@@ -345,7 +407,7 @@ fi
 # Add human comments context if available
 if [ -n "$HUMAN_COMMENTS" ]; then
     PROMPT_PREFIX="${PROMPT_PREFIX}
-Human Comments on this PR:
+Human Comments on this PR (newest first):
 $HUMAN_COMMENTS
 
 Please consider these human comments when reviewing the code.
