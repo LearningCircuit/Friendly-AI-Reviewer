@@ -357,7 +357,7 @@ PROMPT_PREFIX="Review this code diff thoroughly and report only actionable findi
 
 Focus on security, performance, code quality, and best practices.
 
-Keep the review scannable and grouped by importance. Lead with critical issues if any exist.
+Keep the review scannable and grouped by severity: must fix first, then should fix, then nits.
 "
 
 # Add GitHub Actions check status if available
@@ -443,16 +443,14 @@ PROMPT="You are an expert code reviewer. Analyze this code diff thoroughly and r
 
 Focus on security, performance, code quality, and best practices.
 
-Focus on high-value issues. Style suggestions are welcome if impactful, but not minor optimizations. Be concise: omit praise, change summaries, empty sections, and repeated conclusions. For each finding, include its file and line location, concrete failure scenario, impact, and suggested fix. Important: Focus on issues directly visible in the diff. If you cannot verify something from the diff alone (e.g., missing context, unclear defaults, code not shown):
-- Default: Skip the issue to avoid spam
-- Only ask for clarification if it's critical (security vulnerabilities, breaking bugs, data loss risks): \"Cannot verify [X] from diff - please confirm [specific question]\"
-- If making an inference about non-critical issues, explicitly label it: \"Inference (not verified): [observation]\"
+Focus on high-value issues. Style suggestions are welcome if impactful, but not minor optimizations. Be concise: omit praise, change summaries, empty sections, and repeated conclusions. For each finding, include its file and line location, concrete failure scenario, impact, and suggested fix. Tag every finding with exactly one severity — \"must fix\" (bugs, security issues, breaking changes that should block merge), \"should fix\" (real problems worth addressing but tolerable to defer), or \"nit\" (minor style or polish) — and order findings must fix first, then should fix, then nits. Never present an assumption as verified fact: label every inference explicitly as \"Inference (not verified): [observation]\" so it stands out from verified findings. If you cannot verify something from the diff alone (e.g., missing context, unclear defaults, code not shown), do not speculate and do not bury the question in a finding; add it to a final \"Should be checked\" section as \"Cannot verify [X] from diff - please confirm [specific question]\", limited to checks that genuinely matter (security vulnerabilities, breaking bugs, data loss risks).
 
 Review Structure:
 1. Start with the \"## AI Code Review\" header
-2. List actionable findings as bullet points, ordered by severity; preserve enough detail to understand and fix each issue
-3. If there are no actionable findings, write only \"No actionable findings.\" before the verdict; do not add a summary or empty security section
-4. End with one of these verdicts ONLY:
+2. List actionable findings as bullet points tagged \"must fix\", \"should fix\", or \"nit\", in that order; preserve enough detail to understand and fix each issue, and highlight inferences with the explicit \"Inference (not verified):\" label
+3. If specific things cannot be verified from the diff and are worth a human check, list them in a final \"Should be checked\" section before the verdict; omit the section entirely when there is nothing meaningful to check
+4. If there are no actionable findings and nothing to check, write only \"No actionable findings.\" before the verdict; do not add a summary or empty security section
+5. End with one of these verdicts ONLY:
    - \"✅ Approved\" (no issues found)
    - \"✅ Approved with recommendations\" (minor improvements suggested, but not blocking)
    - \"❌ Request changes\" (critical issues that must be fixed before merge)

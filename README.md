@@ -110,7 +110,7 @@ This will generate a fresh review of the current PR state.
 
 ## Review Results
 
-The AI reviews your code across all focus areas and reports actionable findings ordered by severity, with a location, failure scenario, impact, and suggested fix. It omits praise, change summaries, and empty sections. A clean review says "No actionable findings." followed by the verdict. Concise output does not lower the token budget available for reasoning and findings. The review is meant to assist human reviewers, not replace them.
+The AI reviews your code across all focus areas and reports actionable findings as bullets tagged **must fix**, **should fix**, or **nit** (in that order), each with a location, failure scenario, impact, and suggested fix. Inferences are highlighted with an explicit "Inference (not verified):" label so they are never mistaken for verified facts, and anything that cannot be verified from the diff but is worth a human look is collected in a final "Should be checked" section. The review omits praise, change summaries, and empty sections; a clean review says "No actionable findings." followed by the verdict. Concise output does not lower the token budget available for reasoning and findings. The review is meant to assist human reviewers, not replace them.
 
 ## Cost Estimation
 

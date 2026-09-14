@@ -203,7 +203,12 @@ print((path / "response.json").read_text())
         prompt = request["messages"][0]["content"]
         self.assertIn("Analyze this code diff thoroughly", prompt)
         self.assertIn("omit praise, change summaries, empty sections", prompt)
-        self.assertIn("ordered by severity", prompt)
+        for tag in ("must fix", "should fix", "nit"):
+            self.assertIn(f'"{tag}"', prompt)
+        self.assertIn("order findings must fix first, then should fix, then nits", prompt)
+        self.assertIn('label every inference explicitly as "Inference (not verified):', prompt)
+        self.assertIn('add it to a final "Should be checked" section', prompt)
+        self.assertIn("omit the section entirely when there is nothing meaningful to check", prompt)
         self.assertIn("file and line location, concrete failure scenario, impact", prompt)
         self.assertIn('write only "No actionable findings." before the verdict', prompt)
         self.assertNotIn("Always include a", prompt)
@@ -295,9 +300,12 @@ print((path / "response.json").read_text())
     def test_actionable_output_and_custom_budget_are_preserved(self):
         findings = {
             "review": (
-                f"{HEADER}\n\n- [High] file.py:12: Passing an empty list raises "
-                "IndexError, failing the request. Check the list before indexing."
-                f"\n\n❌ Request changes\n\n{FOOTER}"
+                f"{HEADER}\n\n- **must fix** — file.py:12: Passing an empty list "
+                "raises IndexError, failing the request. Check the list before "
+                "indexing.\n- **nit** — file.py:40: \"Inference (not verified): \" "
+                "the loop could early-exit.\n\nShould be checked:\n- Cannot verify "
+                "the migration is reversible from diff - please confirm a "
+                "downgrade path exists.\n\n❌ Request changes\n\n{FOOTER}"
             ),
             "fail_pass_workflow": "fail",
             "labels_added": ["bug", "tests"],
