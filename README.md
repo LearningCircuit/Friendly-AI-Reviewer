@@ -81,7 +81,7 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
 - **MAX_HUMAN_COMMENTS_TOTAL**: Overall byte budget for the human-comments block (`head -c`); when exceeded, the block is cut and marked (default: `20000`; `0` omits the block entirely)
 - **STRUCTURED_OUTPUT**: Enforce a JSON Schema on the model's output via OpenRouter structured outputs (default: `true`)
   - Makes the provider emit valid, correctly-escaped JSON instead of the model hand-writing it — the main cause of "Invalid JSON response from AI model"
-  - Requires a model/provider that supports `response_format` json_schema (most modern models do; e.g. Kimi K2, MiniMax M2.5)
+  - Requires a model/provider that supports `response_format` json_schema (most modern models do; e.g. GLM 5.3, Kimi K2, MiniMax M2.5)
   - Set to `false` only if your chosen model doesn't support structured outputs
 - **DEBUG_MODE**: Enable debug logging (default: `false`)
   - ⚠️ Warning: Exposes code diff in workflow logs when enabled
@@ -226,4 +226,4 @@ For issues with:
 
 ## Development Tests
 
-Run `python3 -m unittest discover -s tests -v` to check the generated request and comment context filters. The tests use local substitutes for GitHub and OpenRouter, with no network requests or model calls. They require Python 3 and the script dependencies (Bash, jq, and Perl).
+Run `python3 -B -m unittest discover -s tests -v` to check the generated request and comment context filters. The tests use local substitutes for GitHub and OpenRouter, with no network requests or model calls. They require Python 3 and the script dependencies (Bash, jq, and Perl). The `-B` flag keeps Python from writing `__pycache__` into the tree (CI uses it for the same reason; `.gitignore` covers it as a backstop).
