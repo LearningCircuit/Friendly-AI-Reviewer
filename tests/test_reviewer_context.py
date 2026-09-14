@@ -587,6 +587,44 @@ print((path / "response.json").read_text())
         self.assertIn("- **e2e**: completed (failure)", prompt)
         self.assertNotIn("- **shard-0**", prompt)
 
+    def test_previous_review_clip_is_marked(self):
+        sticky = comment(f"{MARKER}\n" + "r" * 11000 + "\n\n✅ Approved")
+        request = self.run_reviewer([sticky], human=False)
+        prompt = request["messages"][0]["content"]
+        self.assertIn("Previous AI Review (for context", prompt)
+        self.assertIn("[…truncated at 10000 bytes]", prompt)
+
+    def test_commit_summary_reports_unavailable_line_stats(self):
+        commits = [
+            pull_commit("ok1", "feat: one", login="alice"),
+            pull_commit("bad1", "feat: two", login="alice"),
+        ]
+        # Only ok1 has stats; the fetch for bad1 fails (the stub rejects
+        # unknown shas), which must be reported instead of reading as +0/-0.
+        request = self.run_reviewer(
+            previous=False, human=False,
+            pull_commits=commits,
+            commit_stats={"ok1": {"stats": {"additions": 7, "deletions": 2}}},
+            config={"INCLUDE_COMMIT_SUMMARY": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn(
+            "There are 2 commits already on this PR "
+            "(line stats unavailable for 1 commit(s))",
+            prompt,
+        )
+
+    def test_workflow_forwards_reviewer_configuration(self):
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github" / "workflows" / "ai-code-reviewer.yml").read_text()
+        for name in (
+            "AI_MODEL", "MAX_DIFF_SIZE", "STRUCTURED_OUTPUT",
+            "MAX_SUMMARY_COMMITS", "MAX_COMMIT_MESSAGES", "INCLUDE_COMMIT_SUMMARY",
+            "MAX_HUMAN_COMMENTS", "MAX_HUMAN_COMMENT_LENGTH",
+            "MAX_HUMAN_COMMENTS_TOTAL",
+        ):
+            self.assertIn(name + ": ${{ vars." + name, workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

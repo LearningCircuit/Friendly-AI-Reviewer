@@ -146,7 +146,15 @@ fi
 # full merged comment list, so a sticky review beyond page one is still found.
 PREVIOUS_REVIEWS=""
 if [ "$INCLUDE_PREVIOUS_REVIEWS" = "true" ] && [ "$COMMENTS_JSON" != "[]" ]; then
-    PREVIOUS_REVIEWS=$(echo "$COMMENTS_JSON" | jq -r "$COMMENT_CLASSIFIERS"'[.[] | select(is_ai_review)] | last | if . then "### Previous AI Review (" + .created_at + "):\n" + .body + "\n---\n" else "" end' 2>/dev/null | head -c 10000 || echo "")
+    PREVIOUS_REVIEWS_FULL=$(echo "$COMMENTS_JSON" | jq -r "$COMMENT_CLASSIFIERS"'[.[] | select(is_ai_review)] | last | if . then "### Previous AI Review (" + .created_at + "):\n" + .body + "\n---\n" else "" end' 2>/dev/null || echo "")
+    PREVIOUS_REVIEWS=$(printf '%s' "$PREVIOUS_REVIEWS_FULL" | head -c 10000)
+    # Same truncation contract as every other budget: detect from the source
+    # length and mark, so a cut-off prior review (verdict, "Should be checked"
+    # items) is never mistaken for a complete one.
+    if [ "$(printf '%s' "$PREVIOUS_REVIEWS_FULL" | wc -c)" -gt 10000 ]; then
+        PREVIOUS_REVIEWS="$PREVIOUS_REVIEWS
+[…truncated at 10000 bytes]"
+    fi
 fi
 
 # Human comments for context. Human comments are valuable, so the defaults
@@ -305,22 +313,36 @@ if [ "$INCLUDE_COMMIT_SUMMARY" = "true" ] && [ -n "$COMMITS_JSON" ] && [ "$COMMI
     MERGE_COUNT=$(( MERGE_COUNT - NONMERGE_COUNT ))
 
     AUTHOR_LINES=""
+    STATS_FAILURES=0
     if [ "$MAX_SUMMARY_COMMITS" -gt 0 ] && [ "$NONMERGE_COUNT" -gt 0 ]; then
         # One "author<TAB>additions<TAB>deletions" row per listed commit,
-        # piped straight into the aggregation — no temp file to leak if a
-        # stats fetch goes wrong. A failed stats fetch counts as zero rather
-        # than aborting the review.
-        AUTHOR_LINES=$(while IFS=$'\t' read -r author sha; do
-                [ -n "$sha" ] || continue
-                line_stats=$(gh api "repos/$REPO_FULL_NAME/commits/$sha" \
-                    --jq '"\(.stats.additions // 0)\t\(.stats.deletions // 0)"' 2>/dev/null || printf '0\t0')
-                printf '%s\t%s\n' "$author" "$line_stats"
-            done < <(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_SUMMARY_COMMITS" \
-                '[.[] | select(.commit.message | startswith("Merge") | not)]
-                 | if $n > 0 then .[-$n:] else [] end
-                 | .[] | [(.author.login // .commit.author.name), .sha] | @tsv') \
-            | awk -F'\t' '{ count[$1]++; add[$1] += $2; del[$1] += $3 }
-                END { for (who in count) printf "%s\t%d\t%d\t%d\n", who, count[who], add[who], del[who] }' \
+        # aggregated right after — no temp file to leak if a stats fetch
+        # goes wrong. A failed fetch counts as zero lines but is tracked
+        # separately, so "unknown" never masquerades as a verified +0/-0
+        # (the summary header says how many commits lack line stats).
+        # The loop reads from process substitution, so it runs in the
+        # current shell and the counters below persist.
+        STATS_ROWS=""
+        while IFS=$'\t' read -r author sha; do
+            [ -n "$sha" ] || continue
+            if line_stats=$(gh api "repos/$REPO_FULL_NAME/commits/$sha" \
+                --jq '"\(.stats.additions // 0)\t\(.stats.deletions // 0)"' 2>/dev/null); then
+                :
+            else
+                line_stats=$(printf '0\t0')
+                STATS_FAILURES=$((STATS_FAILURES + 1))
+            fi
+            # Command substitution strips the trailing newline, so append it
+            # separately — without it the rows concatenate and awk mis-parses.
+            STATS_ROWS+=$(printf '%s\t%s' "$author" "$line_stats")
+            STATS_ROWS+=$'\n'
+        done < <(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_SUMMARY_COMMITS" \
+            '[.[] | select(.commit.message | startswith("Merge") | not)]
+             | if $n > 0 then .[-$n:] else [] end
+             | .[] | [(.author.login // .commit.author.name), .sha] | @tsv')
+        # Aggregate per author; sort by added lines, then removed, then name.
+        AUTHOR_LINES=$(printf '%s' "$STATS_ROWS" | awk -F'\t' '{ count[$1]++; add[$1] += $2; del[$1] += $3 }
+            END { for (who in count) printf "%s\t%d\t%d\t%d\n", who, count[who], add[who], del[who] }' \
             | LC_ALL=C sort -t$'\t' -k3,3nr -k4,4nr -k1,1)
     fi
 
@@ -333,6 +355,8 @@ if [ "$INCLUDE_COMMIT_SUMMARY" = "true" ] && [ -n "$COMMITS_JSON" ] && [ "$COMMI
             COMMIT_WORD="commits"
         fi
         [ "$MERGE_COUNT" -gt 0 ] && SUMMARY_HEADER="$SUMMARY_HEADER (excluding $MERGE_COUNT merge commit(s))"
+        # Failed line-stat fetches must not read as verified zeros.
+        [ "$STATS_FAILURES" -gt 0 ] && SUMMARY_HEADER="$SUMMARY_HEADER (line stats unavailable for $STATS_FAILURES commit(s))"
         if [ -n "$AUTHOR_LINES" ]; then
             LISTED=$(( MAX_SUMMARY_COMMITS < NONMERGE_COUNT ? MAX_SUMMARY_COMMITS : NONMERGE_COUNT ))
             [ "$LISTED" -eq "$NONMERGE_COUNT" ] \
