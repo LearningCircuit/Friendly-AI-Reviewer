@@ -751,11 +751,15 @@ if [ "$DEBUG_MODE" = "true" ]; then
     echo "Choices count: $(echo "$RESPONSE" | jq '.choices | length')" >&2
     echo "First choice keys: $(echo "$RESPONSE" | jq -r '.choices[0] | keys | join(", ")')" >&2
     echo "Content type: $(echo "$RESPONSE" | jq -r '.choices[0].message | type')" >&2
+    echo "finish_reason: $(echo "$RESPONSE" | jq -r '.choices[0].finish_reason // "none"')" >&2
+    echo "native_finish_reason: $(echo "$RESPONSE" | jq -r '.choices[0].native_finish_reason // "none"')" >&2
+    echo "Token usage: $(echo "$RESPONSE" | jq -c '.usage // {}')" >&2
     echo "=== END API STRUCTURE DEBUG ===" >&2
 fi
 
-# Extract the content
-CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "error"')
+# Extract the content; an absent content yields "" (an explicit sentinel
+# would collide with models that literally return the word "error")
+CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // ""')
 
 # Capture finish_reason so a truncated completion can be reported distinctly
 # from genuinely malformed output (the remedies differ).
@@ -770,14 +774,29 @@ if [ "$DEBUG_MODE" = "true" ]; then
     echo "=== END CONTENT DEBUG ===" >&2
 fi
 
-if [ "$CONTENT" = "error" ]; then
+# A truncated completion (model hit max_tokens) leaves incomplete or empty
+# content — common with reasoning models whose chain-of-thought consumes the
+# token budget on large diffs. Report it specifically, BEFORE the missing-
+# content error path: the remedy is to raise AI_MAX_TOKENS or shrink the
+# diff, not to re-run the same request.
+if [ "$FINISH_REASON" = "length" ]; then
+    generate_error_response "AI response was truncated before it finished (finish_reason=length, max_tokens=$AI_MAX_TOKENS). For reasoning models the chain-of-thought can consume the whole budget on large diffs — increase AI_MAX_TOKENS or reduce the diff size."
+    exit 0
+fi
+
+if [ -z "$CONTENT" ] || [ "$CONTENT" = "error" ]; then
     # Try to extract error details — OpenRouter nests provider errors in
     # choices[0].error; top-level .error carries request/routing errors.
-    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].error.message // .error.message // "Invalid API response format"')
+    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].error.message // .error.message // "Model returned no content"')
     ERROR_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].error.code // .error.code // ""')
 
-    # Return error as JSON
-    ERROR_CONTENT="$REVIEW_HEADER\n\n❌ **Error**: $ERROR_MSG"
+    # Return error as JSON, always carrying finish_reason so an empty
+    # completion is diagnosable from the posted error alone.
+    if [ -n "$FINISH_REASON" ]; then
+        ERROR_CONTENT="$REVIEW_HEADER\n\n❌ **Error**: $ERROR_MSG (finish_reason: $FINISH_REASON)"
+    else
+        ERROR_CONTENT="$REVIEW_HEADER\n\n❌ **Error**: $ERROR_MSG (finish_reason: none)"
+    fi
     if [ -n "$ERROR_CODE" ]; then
         ERROR_CONTENT="$ERROR_CONTENT\n\nError code: \`$ERROR_CODE\`"
     fi
@@ -791,21 +810,6 @@ if [ "$CONTENT" = "error" ]; then
         echo "API Error code: $ERROR_CODE" >&2
     fi
     exit 1
-fi
-
-# A truncated completion (model hit max_tokens) leaves incomplete or empty
-# content — common with reasoning models whose chain-of-thought consumes the
-# token budget on large diffs. Report it specifically: the remedy is to raise
-# AI_MAX_TOKENS or shrink the diff, not to re-run the same request.
-if [ "$FINISH_REASON" = "length" ]; then
-    generate_error_response "AI response was truncated before it finished (finish_reason=length, max_tokens=$AI_MAX_TOKENS). For reasoning models the chain-of-thought can consume the whole budget on large diffs — increase AI_MAX_TOKENS or reduce the diff size."
-    exit 0
-fi
-
-# Ensure CONTENT is not empty
-if [ -z "$CONTENT" ]; then
-    generate_error_response "AI returned empty response"
-    exit 0
 fi
 
 # Remove thinking tags and content - everything between <thinking> and </thinking>

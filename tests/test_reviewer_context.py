@@ -65,6 +65,8 @@ class ReviewerRequestTests(unittest.TestCase):
         custom_prompt_file=None,
         model_error_first=None,
         expect_model_error=False,
+        finish_reason=None,
+        expect_truncation=False,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -91,8 +93,12 @@ class ReviewerRequestTests(unittest.TestCase):
             expected = response if response is not None else CLEAN_REVIEW
             response_document = {
                 "choices": [{
-                    "message": {"content": json.dumps(expected)},
-                    "finish_reason": "stop",
+                    "message": {"content": json.dumps(expected)}
+                    if not (expect_model_error or expect_truncation)
+                    else {},
+                    "finish_reason": finish_reason
+                    or ("error" if expect_model_error else "length"
+                        if expect_truncation else "stop"),
                 }],
             }
             if expect_model_error:
@@ -213,7 +219,14 @@ else:
             self.fixture_dir = path
             counter = path / "curl-calls"
             self.curl_calls = int(counter.read_text()) if counter.exists() else 0
-            if expect_model_error:
+            if expect_truncation:
+                # An empty completion with finish_reason=length is reported
+                # as a token-budget truncation (exit 0), not an invalid
+                # response — the remedies differ.
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("truncated before it finished", result.stdout)
+                self.assertIn("max_tokens=", result.stdout)
+            elif expect_model_error:
                 # The script reports nested provider errors as an error
                 # review JSON and exits non-zero after its retry.
                 self.assertEqual(result.returncode, 1, result.stderr)
@@ -743,6 +756,12 @@ else:
         self.run_reviewer(
             previous=False, human=False,
             expect_model_error=True,
+        )
+
+    def test_truncated_reasoning_completion_reports_token_budget(self):
+        self.run_reviewer(
+            previous=False, human=False,
+            expect_truncation=True,
         )
 
     def test_check_status_prompt_marks_neutral_informational(self):
