@@ -225,7 +225,7 @@ print((path / "response.json").read_text())
                          ["pass", "fail", "uncertain"])
         self.assertEqual(request["max_tokens"], 64000)
         self.assertEqual(request["temperature"], 0.1)
-        self.assertEqual(request["model"], "minimax/minimax-m2.5")
+        self.assertEqual(request["model"], "z-ai/glm-5.3")
 
     def test_sticky_review_is_only_previous_ai_context(self):
         body = f"{MARKER}\n## Review results\nSticky AI review content"
@@ -506,7 +506,7 @@ print((path / "response.json").read_text())
             config={"MAX_HUMAN_COMMENTS_TOTAL": "50"},
         )
         prompt = request["messages"][0]["content"]
-        self.assertIn("[…truncated at 50 characters]", prompt)
+        self.assertIn("[…truncated at 50 bytes]", prompt)
 
     def test_human_comments_exactly_filling_budget_are_not_marked(self):
         # "**alice** (2026-09-12T10:00:00Z):\n" is 34 characters; a 16-char
@@ -527,7 +527,7 @@ print((path / "response.json").read_text())
             config={"MAX_HUMAN_COMMENTS_TOTAL": "50"},
         )
         prompt = request["messages"][0]["content"]
-        self.assertIn("[…truncated at 50 characters]", prompt)
+        self.assertIn("[…truncated at 50 bytes]", prompt)
 
 
 if __name__ == "__main__":

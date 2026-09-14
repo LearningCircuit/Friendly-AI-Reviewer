@@ -64,7 +64,7 @@ The review is posted as a single concise comment on your pull request with appro
 
 The workflow is pre-configured with sensible defaults, but you can customize it by setting repository variables in **Settings** → **Secrets and variables** → **Actions** → **Variables**:
 
-- **AI_MODEL**: Change the AI model (default: `moonshotai/kimi-k2-thinking`)
+- **AI_MODEL**: Change the AI model (default: `z-ai/glm-5.3`)
   - See [OpenRouter models](https://openrouter.ai/models) for options
   - Recommended: Models with reasoning capabilities (Kimi K2, o1, etc.)
 - **AI_TEMPERATURE**: Adjust randomness (default: `0.1` for consistent reviews)
@@ -78,7 +78,7 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
 - **INCLUDE_COMMIT_SUMMARY**: Include the "There are X commits already on this PR" overview with per-author counts and line totals (default: `true`)
 - **MAX_HUMAN_COMMENTS**: How many of the newest human comments are included (default: `100`). Comments are presented newest-first, so when this or the overall budget clips, the oldest go first — the latest feedback always survives.
 - **MAX_HUMAN_COMMENT_LENGTH**: Maximum characters per human comment; longer comments are clipped and marked " […truncated]" (default: `4000`)
-- **MAX_HUMAN_COMMENTS_TOTAL**: Overall character budget for the human-comments block; when reached, the block is cut and marked (default: `20000`)
+- **MAX_HUMAN_COMMENTS_TOTAL**: Overall byte budget for the human-comments block (`head -c`); when exceeded, the block is cut and marked (default: `20000`)
 - **STRUCTURED_OUTPUT**: Enforce a JSON Schema on the model's output via OpenRouter structured outputs (default: `true`)
   - Makes the provider emit valid, correctly-escaped JSON instead of the model hand-writing it — the main cause of "Invalid JSON response from AI model"
   - Requires a model/provider that supports `response_format` json_schema (most modern models do; e.g. Kimi K2, MiniMax M2.5)
@@ -114,7 +114,7 @@ The AI reviews your code across all focus areas and reports actionable findings 
 
 ## Cost Estimation
 
-Costs with the default Kimi K2 thinking model are very affordable. Based on real usage data:
+Costs with the default GLM 5.3 model are very affordable. Based on real usage data:
 
 **Typical Costs:**
 - Small PR (< 1000 lines): $0.01 - $0.02
@@ -127,7 +127,7 @@ Costs with the default Kimi K2 thinking model are very affordable. Based on real
 - **Total cost: $0.01 - $0.05 per review**
 
 **Why So Affordable:**
-- Kimi K2 has competitive pricing (~$0.001-$0.003 per 1k tokens)
+- GLM 5.3 has competitive pricing (see OpenRouter)
 - Smart context management (only most recent AI review, limited commit history)
 - Most PRs are smaller than you think in token count
 - The 64k token limit is a ceiling, not typical usage
@@ -138,7 +138,7 @@ Costs with the default Kimi K2 thinking model are very affordable. Based on real
 - Number of human comments and commit messages included
 - OpenRouter provider routing (prices vary slightly by provider)
 
-Check [OpenRouter pricing](https://openrouter.ai/models) for current Kimi K2 rates.
+Check [OpenRouter pricing](https://openrouter.ai/models) for current GLM 5.3 rates.
 
 ## Customization
 

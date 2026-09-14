@@ -26,7 +26,7 @@ if [ -z "$API_KEY" ]; then
 fi
 
 # Configuration with defaults
-AI_MODEL="${AI_MODEL:-minimax/minimax-m2.5}"
+AI_MODEL="${AI_MODEL:-z-ai/glm-5.3}"
 AI_TEMPERATURE="${AI_TEMPERATURE:-0.1}"
 AI_MAX_TOKENS="${AI_MAX_TOKENS:-64000}"
 MAX_DIFF_SIZE="${MAX_DIFF_SIZE:-5000000}"  # 5MB default limit (allows large PRs while preventing excessive API usage)
@@ -171,7 +171,7 @@ if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_
     # and hide a real cut.
     if [ "$(printf '%s' "$HUMAN_COMMENTS_FULL" | wc -c)" -gt "$MAX_HUMAN_COMMENTS_TOTAL" ]; then
         HUMAN_COMMENTS="$HUMAN_COMMENTS
-[…truncated at $MAX_HUMAN_COMMENTS_TOTAL characters]"
+[…truncated at $MAX_HUMAN_COMMENTS_TOTAL bytes]"
     fi
 fi
 
@@ -292,24 +292,22 @@ if [ "$INCLUDE_COMMIT_SUMMARY" = "true" ] && [ -n "$COMMITS_JSON" ] && [ "$COMMI
 
     AUTHOR_LINES=""
     if [ "$MAX_SUMMARY_COMMITS" -gt 0 ] && [ "$NONMERGE_COUNT" -gt 0 ]; then
-        STATS_FILE=$(mktemp) || { echo "Failed to create temporary file for commit stats"; exit 1; }
-        chmod 600 "$STATS_FILE"
-        # One "author<TAB>additions<TAB>deletions" row per listed commit;
-        # a failed stats fetch counts as zero rather than aborting the review.
-        while IFS=$'\t' read -r author sha; do
-            [ -n "$sha" ] || continue
-            line_stats=$(gh api "repos/$REPO_FULL_NAME/commits/$sha" \
-                --jq '"\(.stats.additions // 0)\t\(.stats.deletions // 0)"' 2>/dev/null || printf '0\t0')
-            printf '%s\t%s\n' "$author" "$line_stats" >> "$STATS_FILE"
-        done < <(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_SUMMARY_COMMITS" \
-            '[.[] | select(.commit.message | startswith("Merge") | not)]
-             | if $n > 0 then .[-$n:] else [] end
-             | .[] | [(.author.login // .commit.author.name), .sha] | @tsv')
-        # Aggregate per author; sort by added lines, then removed, then name.
-        AUTHOR_LINES=$(awk -F'\t' '{ count[$1]++; add[$1] += $2; del[$1] += $3 }
-            END { for (who in count) printf "%s\t%d\t%d\t%d\n", who, count[who], add[who], del[who] }' "$STATS_FILE" \
+        # One "author<TAB>additions<TAB>deletions" row per listed commit,
+        # piped straight into the aggregation — no temp file to leak if a
+        # stats fetch goes wrong. A failed stats fetch counts as zero rather
+        # than aborting the review.
+        AUTHOR_LINES=$(while IFS=$'\t' read -r author sha; do
+                [ -n "$sha" ] || continue
+                line_stats=$(gh api "repos/$REPO_FULL_NAME/commits/$sha" \
+                    --jq '"\(.stats.additions // 0)\t\(.stats.deletions // 0)"' 2>/dev/null || printf '0\t0')
+                printf '%s\t%s\n' "$author" "$line_stats"
+            done < <(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_SUMMARY_COMMITS" \
+                '[.[] | select(.commit.message | startswith("Merge") | not)]
+                 | if $n > 0 then .[-$n:] else [] end
+                 | .[] | [(.author.login // .commit.author.name), .sha] | @tsv') \
+            | awk -F'\t' '{ count[$1]++; add[$1] += $2; del[$1] += $3 }
+                END { for (who in count) printf "%s\t%d\t%d\t%d\n", who, count[who], add[who], del[who] }' \
             | LC_ALL=C sort -t$'\t' -k3,3nr -k4,4nr -k1,1)
-        rm -f "$STATS_FILE"
     fi
 
     if [ "$NONMERGE_COUNT" -gt 0 ]; then
