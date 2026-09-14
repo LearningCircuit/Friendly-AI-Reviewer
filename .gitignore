@@ -1,0 +1,80 @@
+# ============================================================
+# WHITELIST APPROACH — Only allow specific file types/paths
+# Deny everything by default
+# ============================================================
+
+# Deny everything
+*
+
+# Allow directory traversal (needed for git to recurse)
+!*/
+
+# ============================================================
+# ALLOWED — Specific file types
+# ============================================================
+
+!*.sh
+!*.yml
+!*.yaml
+!*.md
+!*.txt
+
+# ============================================================
+# ALLOWED — Specific root files
+# ============================================================
+
+!LICENSE
+!README.md
+!.gitignore
+
+# ============================================================
+# ALLOWED — .github/ directory (redundant with !*.yml above,
+# but kept for clarity)
+# ============================================================
+
+!.github/
+!.github/**/*.yml
+!.github/**/*.yaml
+!.github/**/*.md
+
+# ============================================================
+# BLOCKED — Virtual environments
+# ============================================================
+
+.venv/
+venv/
+ENV/
+env/
+
+# ============================================================
+# BLOCKED — IDE and OS artifacts
+# (Defensive: already blocked by whitelist, but explicit in
+#  case allow-list grows to include relevant extensions)
+# ============================================================
+
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.cursorrules
+.qodo/
+
+# ============================================================
+# BLOCKED — Logs, temp files, caches
+# ============================================================
+
+*.log
+logs/
+temp/
+tmp/
+.cache
+
+# ============================================================
+# BLOCKED — Security and secrets
+# ============================================================
+
+.secret_key
+.env
+*.pem
+*.key
