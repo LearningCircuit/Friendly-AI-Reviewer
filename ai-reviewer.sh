@@ -153,6 +153,9 @@ if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_
     else
         COMMENT_SLICE="[]"
     fi
+    # Splicing shell variables into a gh api --jq filter is safe here because
+    # gh api has no --arg passthrough and every value above is validated as a
+    # non-negative integer before use.
     HUMAN_COMMENTS_FULL=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
         --jq "$COMMENT_CLASSIFIERS"'[.[] | select(is_bot | not)]
             | '"$COMMENT_SLICE"' | reverse
@@ -162,7 +165,11 @@ if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_
                     else (.body // "") end))
             | join("\n\n---\n\n")' 2>/dev/null || echo "")
     HUMAN_COMMENTS=$(printf '%s' "$HUMAN_COMMENTS_FULL" | head -c "$MAX_HUMAN_COMMENTS_TOTAL")
-    if [ "$(printf '%s' "$HUMAN_COMMENTS" | wc -c)" -eq "$MAX_HUMAN_COMMENTS_TOTAL" ]; then
+    # Detect clipping from the source length, not the result's byte count:
+    # command substitution strips trailing newlines, so a comment ending in
+    # blank lines could otherwise shrink the clipped result below the budget
+    # and hide a real cut.
+    if [ "$(printf '%s' "$HUMAN_COMMENTS_FULL" | wc -c)" -gt "$MAX_HUMAN_COMMENTS_TOTAL" ]; then
         HUMAN_COMMENTS="$HUMAN_COMMENTS
 […truncated at $MAX_HUMAN_COMMENTS_TOTAL characters]"
     fi

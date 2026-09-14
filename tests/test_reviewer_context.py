@@ -500,6 +500,27 @@ print((path / "response.json").read_text())
         prompt = request["messages"][0]["content"]
         self.assertIn("[…truncated at 50 characters]", prompt)
 
+    def test_human_comments_exactly_filling_budget_are_not_marked(self):
+        # "**alice** (2026-09-12T10:00:00Z):\n" is 34 characters; a 16-char
+        # body makes the block exactly 50 — no clip, so no marker.
+        request = self.run_reviewer(
+            [comment("z" * 16, "alice", "User")], previous=False,
+            config={"MAX_HUMAN_COMMENTS_TOTAL": "50"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("z" * 16, prompt)
+        self.assertNotIn("[…truncated", prompt)
+
+    def test_human_comments_clipped_after_trailing_newlines_still_marked(self):
+        # The comment body ends in blank lines: command substitution strips
+        # them from the clipped result, which must not hide the cut.
+        request = self.run_reviewer(
+            [comment("w" * 60 + "\n\n\n", "alice", "User")], previous=False,
+            config={"MAX_HUMAN_COMMENTS_TOTAL": "50"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("[…truncated at 50 characters]", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
