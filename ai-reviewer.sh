@@ -334,9 +334,14 @@ fi
 # fully quoted message list (MAX_COMMIT_MESSAGES).
 COMMIT_SUMMARY=""
 if [ "$INCLUDE_COMMIT_SUMMARY" = "true" ] && [ -n "$COMMITS_JSON" ] && [ "$COMMITS_JSON" != "[]" ]; then
-    NONMERGE_COUNT=$(echo "$COMMITS_JSON" | jq "$COMMIT_CLASSIFIERS"'[.[] | select(is_merge | not)] | length')
-    MERGE_COUNT=$(echo "$COMMITS_JSON" | jq 'length' )
-    MERGE_COUNT=$(( MERGE_COUNT - NONMERGE_COUNT ))
+    # Count merges directly with the shared classifier rather than deriving
+    # them by subtraction — self-consistent if the non-merge filter ever
+    # gains more exclusions — and guard both counts so a jq hiccup degrades
+    # to zero instead of propagating an empty string.
+    NONMERGE_COUNT=$(echo "$COMMITS_JSON" | jq "$COMMIT_CLASSIFIERS"'[.[] | select(is_merge | not)] | length' 2>/dev/null || echo 0)
+    MERGE_COUNT=$(echo "$COMMITS_JSON" | jq "$COMMIT_CLASSIFIERS"'[.[] | select(is_merge)] | length' 2>/dev/null || echo 0)
+    [[ "$NONMERGE_COUNT" =~ ^[0-9]+$ ]] || NONMERGE_COUNT=0
+    [[ "$MERGE_COUNT" =~ ^[0-9]+$ ]] || MERGE_COUNT=0
 
     AUTHOR_LINES=""
     STATS_FAILURES=0
