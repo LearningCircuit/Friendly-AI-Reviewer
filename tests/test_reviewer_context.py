@@ -63,6 +63,8 @@ class ReviewerRequestTests(unittest.TestCase):
         fail_comments=False,
         fail_commits=False,
         custom_prompt_file=None,
+        model_error_first=None,
+        expect_model_error=False,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -87,12 +89,29 @@ class ReviewerRequestTests(unittest.TestCase):
             ))
             (path / "labels.json").write_text(json.dumps(labels or []))
             expected = response if response is not None else CLEAN_REVIEW
-            (path / "response.json").write_text(json.dumps({
+            response_document = {
                 "choices": [{
                     "message": {"content": json.dumps(expected)},
                     "finish_reason": "stop",
                 }],
-            }))
+            }
+            if expect_model_error:
+                response_document = {
+                    "choices": [{
+                        "message": {},
+                        "error": {"code": 502, "message": "provider exploded"},
+                        "finish_reason": "error",
+                    }],
+                }
+            (path / "response.json").write_text(json.dumps(response_document))
+            if model_error_first is not None:
+                (path / "model-error-first.json").write_text(json.dumps({
+                    "choices": [{
+                        "message": {},
+                        "error": model_error_first,
+                        "finish_reason": "error",
+                    }],
+                }))
             stubs = {
                 "gh": '''import json, os, subprocess, sys
 from pathlib import Path
@@ -152,7 +171,15 @@ assert "https://openrouter.ai/api/v1/chat/completions" in sys.argv
 assert sys.argv[-2:] == ["--data-binary", "@-"]
 path = Path(os.environ["FIXTURE_DIR"])
 (path / "request.json").write_text(sys.stdin.read())
-print((path / "response.json").read_text())
+counter = path / "curl-calls"
+calls = int(counter.read_text()) + 1 if counter.exists() else 1
+counter.write_text(str(calls))
+# An error-first fixture models a transient OpenRouter provider failure
+# (nested in choices[0].error): the first call fails, the retry succeeds.
+if calls == 1 and (path / "model-error-first.json").exists():
+    print((path / "model-error-first.json").read_text())
+else:
+    print((path / "response.json").read_text())
 ''',
             }
             for name, source in stubs.items():
@@ -183,8 +210,17 @@ print((path / "response.json").read_text())
                 input="diff --git a/file.py b/file.py\n+print('example')\n",
                 text=True, capture_output=True, env=environment, timeout=10,
             )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout), expected)
+            self.fixture_dir = path
+            counter = path / "curl-calls"
+            self.curl_calls = int(counter.read_text()) if counter.exists() else 0
+            if expect_model_error:
+                # The script reports nested provider errors as an error
+                # review JSON and exits non-zero after its retry.
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("provider exploded", result.stdout)
+            else:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), expected)
             calls_file = path / "gh-calls.jsonl"
             calls = calls_file.read_text().splitlines() if calls_file.exists() else []
             self.gh_calls = [json.loads(call) for call in calls]
@@ -692,6 +728,22 @@ print((path / "response.json").read_text())
         )
         prompt = request["messages"][0]["content"]
         self.assertIn("[…truncated at 8000 bytes]", prompt)
+
+    def test_transient_provider_error_is_retried_once(self):
+        # rc 0 + the clean-review round-trip (asserted by the harness) prove
+        # the retry recovered; the counter proves exactly two model calls.
+        self.run_reviewer(
+            previous=False, human=False,
+            model_error_first={"code": 502, "message": "provider exploded"},
+        )
+        calls = self.curl_calls
+        self.assertEqual(calls, 2)
+
+    def test_persistent_provider_error_message_is_surfaced(self):
+        self.run_reviewer(
+            previous=False, human=False,
+            expect_model_error=True,
+        )
 
     def test_check_status_prompt_marks_neutral_informational(self):
         request = self.run_reviewer(

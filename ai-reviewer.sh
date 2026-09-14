@@ -642,10 +642,6 @@ $PROMPT_PREFIX
 
 $DIFF_CONTENT"
 
-# Make API call to OpenRouter with simple JSON
-# Use generic or repo-specific referer
-REFERER_URL="https://github.com/${REPO_FULL_NAME:-unknown/repo}"
-
 # Build JSON payload and pipe to curl to avoid "Argument list too long" error
 # Write prompt to temp file to avoid passing large content as command-line argument
 PROMPT_FILE=$(mktemp) || { echo "Failed to create temporary file for prompt"; exit 1; }
@@ -701,11 +697,37 @@ JSON_PAYLOAD=$(jq -n \
       "max_tokens": $max_tokens
     } + $response_format')
 
-RESPONSE=$(echo "$JSON_PAYLOAD" | curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $API_KEY" \
-    -H "HTTP-Referer: $REFERER_URL" \
-    --data-binary @-)
+# Make API call to OpenRouter with simple JSON
+# Use generic or repo-specific referer
+REFERER_URL="https://github.com/${REPO_FULL_NAME:-unknown/repo}"
+
+call_model_api() {
+    echo "$JSON_PAYLOAD" | curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $API_KEY" \
+        -H "HTTP-Referer: $REFERER_URL" \
+        --data-binary @-
+}
+
+RESPONSE=$(call_model_api)
+
+# OpenRouter routes among providers, and a provider can fail a request
+# transiently — that error arrives NESTED inside choices[0].error rather
+# than at the top level. Retry once before treating it as a failure; a
+# single immediate retry cannot loop.
+is_model_error() {
+    echo "$1" | jq -e '(.choices[0].error != null) or has("error")' >/dev/null 2>&1
+}
+
+if is_model_error "$RESPONSE"; then
+    echo "⚠️  Model provider error on first attempt; retrying once" >&2
+    RETRY_RESPONSE=$(call_model_api)
+    if ! is_model_error "$RETRY_RESPONSE"; then
+        RESPONSE="$RETRY_RESPONSE"
+    else
+        echo "⚠️  Retry also failed with a model provider error" >&2
+    fi
+fi
 
 # Check if API call was successful
 if [ -z "$RESPONSE" ]; then
@@ -749,9 +771,10 @@ if [ "$DEBUG_MODE" = "true" ]; then
 fi
 
 if [ "$CONTENT" = "error" ]; then
-    # Try to extract error details from the API response
-    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // "Invalid API response format"')
-    ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // ""')
+    # Try to extract error details — OpenRouter nests provider errors in
+    # choices[0].error; top-level .error carries request/routing errors.
+    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].error.message // .error.message // "Invalid API response format"')
+    ERROR_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].error.code // .error.code // ""')
 
     # Return error as JSON
     ERROR_CONTENT="$REVIEW_HEADER\n\n❌ **Error**: $ERROR_MSG"
