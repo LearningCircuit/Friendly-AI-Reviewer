@@ -140,10 +140,11 @@ def is_merge:
 '
 
 # head -c cuts at a byte boundary, which can split a multibyte UTF-8
-# character and leave an invalid sequence at the end of a block — jq (which
-# builds the request payload) rejects invalid UTF-8, so the whole review
-# would fail over one clipped emoji. Strip a trailing incomplete sequence;
-# complete characters are never touched.
+# character and leave an invalid sequence at the end of a block. Older jq
+# (which builds the request payload) rejects invalid UTF-8 outright; jq 1.7
+# silently substitutes U+FFFD, corrupting the clipped text. Either way the
+# trailing incomplete sequence is pure damage — strip it; complete
+# characters are never touched.
 strip_partial_utf8() {
     perl -pe 's/(?:[\xF0-\xF4][\x80-\xBF]{0,2}|[\xE0-\xEF][\x80-\xBF]?|[\xC2-\xDF])$//'
 }
@@ -157,7 +158,17 @@ strip_partial_utf8() {
 # inside a gh api --jq filter — that would apply it per page).
 COMMENTS_JSON="[]"
 if { [ "$INCLUDE_PREVIOUS_REVIEWS" = "true" ] || [ "$INCLUDE_HUMAN_COMMENTS" = "true" ]; } && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    COMMENTS_JSON=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" --paginate 2>/dev/null | jq -s 'add // []' || echo "[]")
+    # Capture gh's exit separately from the merge: the pipeline's status
+    # would be jq's, so a mid-pagination failure (rate limit, transient
+    # 5xx) after valid pages would otherwise be silent and leave a stale
+    # prefix posing as the full list. Treat any fetch failure as no data
+    # rather than a quietly truncated context.
+    if COMMENTS_RAW=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" --paginate 2>/dev/null); then
+        COMMENTS_JSON=$(printf '%s' "$COMMENTS_RAW" | jq -s 'add // []')
+    else
+        echo "⚠️  Comment list fetch failed; continuing without comment context" >&2
+        COMMENTS_JSON="[]"
+    fi
 fi
 
 # Previous AI review (only the most recent one) for context. Selected from the
@@ -229,8 +240,14 @@ if [ "$INCLUDE_CHECK_RUNS" = "true" ] && [ -n "$PR_JSON" ]; then
     if [ -n "$HEAD_SHA" ]; then
         # Paginate (the endpoint returns 30 runs per page by default — big
         # matrix repos exceed that) and merge the pages locally; the summary
-        # must see the full list, not page one.
-        CHECK_RUNS_JSON=$(gh api "repos/$REPO_FULL_NAME/commits/$HEAD_SHA/check-runs" --paginate 2>/dev/null | jq -s 'map(.check_runs // []) | add // []' || echo "[]")
+        # must see the full list, not page one. A failed fetch yields no
+        # CI context rather than an undercounted summary.
+        if CHECK_RUNS_RAW=$(gh api "repos/$REPO_FULL_NAME/commits/$HEAD_SHA/check-runs" --paginate 2>/dev/null); then
+            CHECK_RUNS_JSON=$(printf '%s' "$CHECK_RUNS_RAW" | jq -s 'map(.check_runs // []) | add // []')
+        else
+            echo "⚠️  Check-run fetch failed; continuing without CI status" >&2
+            CHECK_RUNS_JSON="[]"
+        fi
         CHECK_RUNS_SUMMARY=$(echo "$CHECK_RUNS_JSON" | jq \
             '{total: length,
               passed: [.[] | select(.conclusion == "success")] | length,
@@ -262,8 +279,12 @@ if [ "$INCLUDE_LABELS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAM
     if [ "$DEBUG_MODE" = "true" ]; then
         echo "🔍 Fetching available labels from repository..." >&2
     fi
-    AVAILABLE_LABELS=$(gh api "repos/$REPO_FULL_NAME/labels" --paginate 2>/dev/null \
-        --jq '.[] | "- **\(.name)**: \(.description // "No description") (color: #\(.color))"' || echo "")
+    AVAILABLE_LABELS=""
+    if LABELS_RAW=$(gh api "repos/$REPO_FULL_NAME/labels" --paginate 2>/dev/null); then
+        AVAILABLE_LABELS=$(printf '%s' "$LABELS_RAW" | jq -sr 'add | .[] | "- **\(.name)**: \(.description // "No description") (color: #\(.color))"')
+    else
+        echo "⚠️  Label fetch failed; continuing without label context" >&2
+    fi
 
     if [ "$DEBUG_MODE" = "true" ]; then
         if [ -n "$AVAILABLE_LABELS" ]; then
@@ -306,7 +327,15 @@ if { [ "$INCLUDE_COMMIT_MESSAGES" = "true" ] || [ "$INCLUDE_COMMIT_SUMMARY" = "t
     if [ "$DEBUG_MODE" = "true" ]; then
         echo "🔍 Fetching PR commits..." >&2
     fi
-    COMMITS_JSON=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER/commits" --paginate 2>/dev/null | jq -s 'add // []' || echo "[]")
+    # Same fetch-failure discipline as the comment list: gh's exit is
+    # checked separately from the page merge, so a mid-pagination failure
+    # yields no data instead of a stale prefix.
+    if COMMITS_RAW=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER/commits" --paginate 2>/dev/null); then
+        COMMITS_JSON=$(printf '%s' "$COMMITS_RAW" | jq -s 'add // []')
+    else
+        echo "⚠️  Commit list fetch failed; continuing without commit history" >&2
+        COMMITS_JSON="[]"
+    fi
 
     if [ "$DEBUG_MODE" = "true" ]; then
         echo "✅ Fetched $(echo "$COMMITS_JSON" | jq 'length') commit(s) from the PR" >&2

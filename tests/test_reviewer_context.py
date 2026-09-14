@@ -60,6 +60,8 @@ class ReviewerRequestTests(unittest.TestCase):
         check_runs=None,
         labels=None,
         pr=None,
+        fail_comments=False,
+        fail_commits=False,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -71,6 +73,10 @@ class ReviewerRequestTests(unittest.TestCase):
             (path / "pr.json").write_text(json.dumps(
                 pr if pr is not None else {"number": 123, "head": {"sha": "abc"}}
             ))
+            if fail_comments:
+                (path / "fail-comments").write_text("")
+            if fail_commits:
+                (path / "fail-commits").write_text("")
             (path / "check-runs.json").write_text(json.dumps(
                 {"total_count": len(check_runs or []), "check_runs": check_runs or []}
             ))
@@ -98,9 +104,15 @@ if parts == ["issues", "123", "comments"]:
     # page size of 30, oldest first.
     for start in range(0, len(comments), 30):
         sys.stdout.write(json.dumps(comments[start:start + 30]))
+    # A mid-stream failure flag: pages already written, then gh exits 1 —
+    # the partial-payload scenario the fetch discipline must reject.
+    if (path / "fail-comments").exists():
+        sys.exit(1)
     sys.exit(0)
 if parts == ["pulls", "123", "commits"]:
     assert args[2:] == ["--paginate"], args
+    if (path / "fail-commits").exists():
+        sys.exit(1)
     sys.stdout.write((path / "pull-commits.json").read_text())
     sys.exit(0)
 if parts == ["pulls", "123"]:
@@ -117,10 +129,9 @@ if parts == ["commits", "abc", "check-runs"]:
         ))
     sys.exit(0)
 if parts == ["labels"]:
-    assert args[2:4] == ["--paginate", "--jq"] and len(args) == 5, args
-    result = subprocess.run(["jq", "-r", args[4]],
-                            input=(path / "labels.json").read_text(), text=True)
-    sys.exit(result.returncode)
+    assert args[2:] == ["--paginate"], args
+    sys.stdout.write((path / "labels.json").read_text())
+    sys.exit(0)
 if len(parts) == 2 and parts[0] == "commits":
     assert args[2] == "--jq" and len(args) == 4, args
     stats = json.loads((path / "commit-stats.json").read_text())
@@ -525,11 +536,13 @@ print((path / "response.json").read_text())
         self.assertIn("[…truncated at 50 bytes]", prompt)
 
     def test_multibyte_comment_survives_a_byte_boundary_clip(self):
-        # The budget lands mid-emoji: without stripping the partial UTF-8
-        # sequence, jq rejects the prompt when building the request payload
-        # and the whole review fails. The header is 34 bytes, so a 39-byte
-        # budget keeps one complete 4-byte emoji and cuts one byte into the
-        # next.
+        # The budget lands mid-emoji. Without stripping the partial UTF-8
+        # sequence, jq 1.7 substitutes U+FFFD (verified: it exits 0 and
+        # silently corrupts the clipped text; older jq rejects outright) —
+        # the assertNotIn below is what pins the guard, since the request
+        # otherwise builds fine. The header is 34 bytes, so a 39-byte
+        # budget keeps one complete 4-byte emoji and cuts one byte into
+        # the next.
         request = self.run_reviewer(
             [comment("😀" * 20, "alice", "User")], previous=False,
             config={"MAX_HUMAN_COMMENTS_TOTAL": "39"},
@@ -537,6 +550,67 @@ print((path / "response.json").read_text())
         prompt = request["messages"][0]["content"]
         self.assertIn("😀", prompt)
         self.assertIn("[…truncated at 39 bytes]", prompt)
+        self.assertNotIn("\ufffd", prompt)
+
+    def test_partial_comment_fetch_failure_drops_context(self):
+        # gh fails after emitting valid pages (mid-pagination rate limit):
+        # the emitted prefix must be discarded, not posing as the full list.
+        request = self.run_reviewer(
+            [comment("latest human feedback", "alice", "User")],
+            previous=False, fail_comments=True,
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertNotIn("Human Comments on this PR", prompt)
+        self.assertNotIn("latest human feedback", prompt)
+
+    def test_commits_fetch_failure_skips_history_context(self):
+        commits, stats = self.commit_fixture()
+        request = self.run_reviewer(
+            previous=False, human=False, pull_commits=commits, commit_stats=stats,
+            fail_commits=True,
+            config={"INCLUDE_COMMIT_MESSAGES": "true", "INCLUDE_COMMIT_SUMMARY": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertNotIn("Commit Summary:", prompt)
+        self.assertNotIn("Commit History", prompt)
+
+    def test_previous_review_multibyte_clip_is_clean(self):
+        # "### Previous AI Review (ts):\n" + the marker line + 9900 r's put
+        # the 10000-byte cut 21 bytes into the emoji run: five complete
+        # emoji survive, the sixth is cut mid-sequence and stripped.
+        sticky = comment(f"{MARKER}\n" + "r" * 9900 + "😀" * 10 + "\n\n✅ Approved")
+        request = self.run_reviewer([sticky], human=False)
+        prompt = request["messages"][0]["content"]
+        self.assertIn("Previous AI Review (for context", prompt)
+        self.assertIn("[…truncated at 10000 bytes]", prompt)
+        self.assertIn("😀", prompt)
+        self.assertNotIn("\ufffd", prompt)
+
+    def test_per_comment_clip_slices_by_character_not_byte(self):
+        # jq slices by codepoints: a mixed multibyte body clips at a
+        # character boundary, never mid-sequence.
+        request = self.run_reviewer(
+            [comment("αβγ😀ϵζη", "alice", "User")], previous=False,
+            config={"MAX_HUMAN_COMMENT_LENGTH": "5"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("αβγ😀ϵ […truncated]", prompt)
+        self.assertNotIn("ζη", prompt)
+        self.assertNotIn("\ufffd", prompt)
+
+    def test_no_pr_fetch_when_no_feature_needs_it(self):
+        self.run_reviewer(previous=False, human=False)
+        pulls_calls = [call for call in self.gh_calls if call[1].endswith("/pulls/123")]
+        self.assertEqual(pulls_calls, [])
+
+    def test_commit_message_body_is_indented_under_subject(self):
+        commits = [pull_commit("c1", "subject line\n\nbody paragraph", login="alice")]
+        request = self.run_reviewer(
+            previous=False, human=False, pull_commits=commits,
+            config={"INCLUDE_COMMIT_MESSAGES": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("- subject line\n  body paragraph", prompt)
 
     def test_pr_description_clip_is_marked(self):
         request = self.run_reviewer(
