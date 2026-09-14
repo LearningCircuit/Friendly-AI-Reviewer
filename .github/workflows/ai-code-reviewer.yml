@@ -54,6 +54,8 @@ jobs:
           MAX_HUMAN_COMMENTS: ${{ vars.MAX_HUMAN_COMMENTS || '100' }}
           MAX_HUMAN_COMMENT_LENGTH: ${{ vars.MAX_HUMAN_COMMENT_LENGTH || '4000' }}
           MAX_HUMAN_COMMENTS_TOTAL: ${{ vars.MAX_HUMAN_COMMENTS_TOTAL || '20000' }}
+          CUSTOM_PROMPT: ${{ vars.CUSTOM_PROMPT }}
+          CUSTOM_PROMPT_FILE: ${{ vars.CUSTOM_PROMPT_FILE }}
           STRUCTURED_OUTPUT: ${{ vars.STRUCTURED_OUTPUT || 'true' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO_FULL_NAME: ${{ github.repository }}

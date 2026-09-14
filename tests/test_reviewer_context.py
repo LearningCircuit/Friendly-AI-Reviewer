@@ -62,6 +62,7 @@ class ReviewerRequestTests(unittest.TestCase):
         pr=None,
         fail_comments=False,
         fail_commits=False,
+        custom_prompt_file=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -79,6 +80,8 @@ class ReviewerRequestTests(unittest.TestCase):
                 (path / "fail-comments").write_text("")
             if fail_commits:
                 (path / "fail-commits").write_text("")
+            if custom_prompt_file is not None:
+                (path / "custom-prompt.md").write_text(custom_prompt_file)
             (path / "check-runs.json").write_text(json.dumps(
                 {"total_count": len(check_runs or []), "check_runs": check_runs or []}
             ))
@@ -173,6 +176,8 @@ print((path / "response.json").read_text())
                 "INCLUDE_COMMIT_SUMMARY": "false",
             }
             environment.update(config or {})
+            if custom_prompt_file is not None:
+                environment["CUSTOM_PROMPT_FILE"] = str(path / "custom-prompt.md")
             result = subprocess.run(
                 ["bash", str(SCRIPT)],
                 input="diff --git a/file.py b/file.py\n+print('example')\n",
@@ -634,6 +639,48 @@ print((path / "response.json").read_text())
         )
         prompt = request["messages"][0]["content"]
         self.assertIn("- fix: thing\n  Details line", prompt)
+
+    def test_custom_prompt_inline_instructions_are_applied(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            config={"CUSTOM_PROMPT": "Prioritize async safety and error handling."},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn(
+            "Additional Review Instructions (from the repository's configuration",
+            prompt,
+        )
+        self.assertIn("Prioritize async safety and error handling.", prompt)
+        # The standard contract is still present underneath the custom layer.
+        self.assertIn('"must fix"', prompt)
+
+    def test_custom_prompt_file_composes_after_inline(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            custom_prompt_file="House rule: never suggest adding comments.",
+            config={"CUSTOM_PROMPT": "Inline part."},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("Inline part.", prompt)
+        self.assertIn("House rule: never suggest adding comments.", prompt)
+        self.assertLess(prompt.index("Inline part."),
+                        prompt.index("House rule:"))
+
+    def test_custom_prompt_file_missing_is_skipped(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            config={"CUSTOM_PROMPT_FILE": "/nonexistent/instructions.md"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertNotIn("Additional Review Instructions", prompt)
+
+    def test_custom_prompt_clip_is_marked(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            config={"CUSTOM_PROMPT": "z" * 9000},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("[…truncated at 8000 bytes]", prompt)
 
     def test_check_status_prompt_marks_neutral_informational(self):
         request = self.run_reviewer(

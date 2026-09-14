@@ -90,6 +90,14 @@ if ! [[ "$MAX_HUMAN_COMMENTS_TOTAL" =~ ^[0-9]+$ ]]; then
     MAX_HUMAN_COMMENTS_TOTAL=20000
 fi
 
+# Additional review instructions from the repository configuration, applied
+# on top of the standard review contract: inline text via CUSTOM_PROMPT
+# and/or a file via CUSTOM_PROMPT_FILE (its content is appended after the
+# inline text). In the workflow the file is read from the checked-out base
+# branch, so committing it to the repo keeps it trusted content.
+CUSTOM_PROMPT="${CUSTOM_PROMPT:-}"
+CUSTOM_PROMPT_FILE="${CUSTOM_PROMPT_FILE:-}"
+
 # Read diff content from stdin
 DIFF_CONTENT=$(cat)
 
@@ -540,11 +548,52 @@ Please consider these human comments when reviewing the code.
 "
 fi
 
+# Assemble the additional-instructions block (inline first, then file),
+# capped and marked like every other prompt budget. An unreadable file
+# warns and is skipped rather than failing the review.
+ADDITIONAL_INSTRUCTIONS=""
+if [ -n "$CUSTOM_PROMPT" ]; then
+    ADDITIONAL_INSTRUCTIONS="$CUSTOM_PROMPT"
+fi
+if [ -n "$CUSTOM_PROMPT_FILE" ]; then
+    if [ -f "$CUSTOM_PROMPT_FILE" ] && [ -r "$CUSTOM_PROMPT_FILE" ]; then
+        FILE_INSTRUCTIONS=$(cat "$CUSTOM_PROMPT_FILE" 2>/dev/null || echo "")
+        if [ -n "$FILE_INSTRUCTIONS" ]; then
+            if [ -n "$ADDITIONAL_INSTRUCTIONS" ]; then
+                ADDITIONAL_INSTRUCTIONS="${ADDITIONAL_INSTRUCTIONS}
+
+${FILE_INSTRUCTIONS}"
+            else
+                ADDITIONAL_INSTRUCTIONS="$FILE_INSTRUCTIONS"
+            fi
+        fi
+    else
+        echo "⚠️  CUSTOM_PROMPT_FILE not readable: $CUSTOM_PROMPT_FILE; continuing without it" >&2
+    fi
+fi
+if [ -n "$ADDITIONAL_INSTRUCTIONS" ]; then
+    ADDITIONAL_FULL="$ADDITIONAL_INSTRUCTIONS"
+    ADDITIONAL_INSTRUCTIONS=$(printf '%s' "$ADDITIONAL_FULL" | head -c 8000 | strip_partial_utf8)
+    if [ "$(printf '%s' "$ADDITIONAL_FULL" | wc -c)" -gt 8000 ]; then
+        ADDITIONAL_INSTRUCTIONS="$ADDITIONAL_INSTRUCTIONS
+[…truncated at 8000 bytes]"
+    fi
+fi
+
 # Add previous AI review context if available (only most recent)
 if [ -n "$PREVIOUS_REVIEWS" ]; then
     PROMPT_PREFIX="${PROMPT_PREFIX}
 Previous AI Review (for context on what was already reviewed):
 $PREVIOUS_REVIEWS
+"
+fi
+
+# Add repository-configured review instructions if available
+if [ -n "$ADDITIONAL_INSTRUCTIONS" ]; then
+    PROMPT_PREFIX="${PROMPT_PREFIX}
+Additional Review Instructions (from the repository's configuration — apply these on top of the standard review instructions):
+$ADDITIONAL_INSTRUCTIONS
+
 "
 fi
 

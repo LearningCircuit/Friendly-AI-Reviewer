@@ -79,6 +79,8 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
 - **MAX_HUMAN_COMMENTS**: How many of the newest human comments are included (default: `100`; `0` includes none at all). Comments are presented newest-first, so when this or the overall budget clips, the oldest go first — the latest feedback always survives.
 - **MAX_HUMAN_COMMENT_LENGTH**: Maximum characters per human comment; longer comments are clipped and marked " […truncated]" (default: `4000`)
 - **MAX_HUMAN_COMMENTS_TOTAL**: Overall byte budget for the human-comments block (`head -c`); when exceeded, the block is cut and marked (default: `20000`; `0` omits the block entirely)
+- **CUSTOM_PROMPT**: Additional review instructions appended on top of the standard review contract — house rules, focus areas, conventions (default: empty). Combined with `CUSTOM_PROMPT_FILE`, the inline text comes first. Capped at 8000 bytes, marked when truncated.
+- **CUSTOM_PROMPT_FILE**: Path to a file with additional review instructions (default: empty). Set it to a file committed to the repository (e.g. `.github/ai-review-instructions.md`) and point the `CUSTOM_PROMPT_FILE` repository variable at it — the workflow reads it from the checked-out base branch, so it stays trusted content. An unreadable path warns in the logs and is skipped.
 - **STRUCTURED_OUTPUT**: Enforce a JSON Schema on the model's output via OpenRouter structured outputs (default: `true`)
   - Makes the provider emit valid, correctly-escaped JSON instead of the model hand-writing it — the main cause of "Invalid JSON response from AI model"
   - Requires a model/provider that supports `response_format` json_schema (most modern models do; e.g. GLM 5.3, Kimi K2, MiniMax M2.5)
