@@ -38,7 +38,7 @@ The AI reviewer automatically fetches existing repository labels and provides th
 - **Reduces label clutter** by avoiding duplicates
 - **Preserves repository conventions** for better organization
 
-The review is posted as a single comprehensive comment on your pull request with appropriate labels automatically added.
+The review is posted as a single concise comment on your pull request with appropriate labels automatically added.
 
 ## Setup Instructions
 
@@ -103,7 +103,7 @@ This will generate a fresh review of the current PR state.
 
 ## Review Results
 
-The AI posts a comprehensive comment analyzing your code across all focus areas. The review is meant to assist human reviewers, not replace them.
+The AI reviews your code across all focus areas and reports actionable findings ordered by severity, with a location, failure scenario, impact, and suggested fix. It omits praise, change summaries, and empty sections. A clean review says "No actionable findings." followed by the verdict. Concise output does not lower the token budget available for reasoning and findings. The review is meant to assist human reviewers, not replace them.
 
 ## Cost Estimation
 
@@ -188,9 +188,9 @@ The workflow fetches and sends these repository elements to the AI:
 1. **Code Changes**: Full diff of modified files
 2. **PR Description**: Title and description text from the pull request
 3. **Commit Messages**: Up to 15 most recent commit messages (excluding merges)
-4. **Human Comments**: All comments from human reviewers on the PR
+4. **Human Comments**: Comments from human reviewers on the PR; bot comments are excluded, while human comments quoting a review header or marker are retained
 5. **Labels**: All repository labels with descriptions and colors
-6. **Previous AI Review**: Most recent AI review comment only (limited to 10k chars)
+6. **Previous AI Review**: Most recent bot-authored AI review comment only (limited to 10k chars), identified by its review header or `<!-- ai-code-review:sticky -->` marker
 7. **CI/CD Status**: GitHub Actions check runs and build statuses
 8. **PR Metadata**: Pull request details, head SHA, repository information
 9. **Files**: May include sensitive configuration files, keys, or credentials
@@ -216,3 +216,7 @@ For issues with:
 - **OpenRouter API**: Check [OpenRouter documentation](https://openrouter.ai/docs)
 - **GitHub Actions**: Check [GitHub Actions documentation](https://docs.github.com/en/actions)
 - **Workflow issues**: Review the GitHub Actions logs for specific error details
+
+## Development Tests
+
+Run `python3 -m unittest discover -s tests -v` to check the generated request and comment context filters. The tests use local substitutes for GitHub and OpenRouter, with no network requests or model calls. They require Python 3 and the script dependencies (Bash, jq, and Perl).

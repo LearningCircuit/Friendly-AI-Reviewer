@@ -78,20 +78,30 @@ Please split this PR into smaller changes for review."
     exit 1
 fi
 
+# Identify bot authors separately from review text: human comments may quote a
+# review header or sticky marker and must remain human context.
+COMMENT_CLASSIFIERS='
+def is_bot:
+    .user.type == "Bot" or ((.user.login // "") | endswith("[bot]"));
+def is_ai_review:
+    is_bot and ((.body // "") |
+        startswith("## AI Code Review") or contains("<!-- ai-code-review:sticky -->"));
+'
+
 # Fetch previous AI review (only the most recent one) for context
 PREVIOUS_REVIEWS=""
 if [ "$INCLUDE_PREVIOUS_REVIEWS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     # Fetch only the most recent AI review comment
     PREVIOUS_REVIEWS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
-        --jq '[.[] | select(.body | startswith("## AI Code Review"))] | last | if . then "### Previous AI Review (" + .created_at + "):\n" + .body + "\n---\n" else "" end' 2>/dev/null | head -c 10000 || echo "")
+        --jq "$COMMENT_CLASSIFIERS"'[.[] | select(is_ai_review)] | last | if . then "### Previous AI Review (" + .created_at + "):\n" + .body + "\n---\n" else "" end' 2>/dev/null | head -c 10000 || echo "")
 fi
 
 # Fetch human comments for context
 HUMAN_COMMENTS=""
 if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    # Fetch comments from humans (not the bot)
+    # Exclude all bot comments; previous AI reviews have their own context block.
     HUMAN_COMMENTS=$(gh api "repos/$REPO_FULL_NAME/issues/$PR_NUMBER/comments" \
-        --jq '[.[] | select(.body | startswith("## AI Code Review") | not)] | map("**" + .user.login + "** (" + .created_at + "):\n" + .body) | join("\n\n---\n\n")' 2>/dev/null | head -c 20000 || echo "")
+        --jq "$COMMENT_CLASSIFIERS"'[.[] | select(is_bot | not)] | map("**" + .user.login + "** (" + .created_at + "):\n" + .body) | join("\n\n---\n\n")' 2>/dev/null | head -c 20000 || echo "")
 fi
 
 # Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set)
@@ -166,7 +176,7 @@ echo "$DIFF_CONTENT" > "$DIFF_FILE" || { echo "Failed to write diff to temporary
 trap 'rm -f "$DIFF_FILE"' EXIT
 
 # Build the user prompt using the diff file
-PROMPT_PREFIX="Please analyze this code diff and provide a comprehensive review in markdown format.
+PROMPT_PREFIX="Review this code diff thoroughly and report only actionable findings in markdown format.
 
 Focus on security, performance, code quality, and best practices.
 
@@ -242,19 +252,19 @@ Code diff to analyze:
 DIFF_CONTENT=$(cat "$DIFF_FILE")
 
 # Simple text prompt requesting JSON response
-PROMPT="You are an expert code reviewer. Please analyze this code diff and provide a comprehensive review.
+PROMPT="You are an expert code reviewer. Analyze this code diff thoroughly and report only actionable findings.
 
 Focus on security, performance, code quality, and best practices.
 
-Focus on high-value issues. Style suggestions are welcome if impactful, but not minor optimizations. Be concise and dense - use bullet points for clear structure. Avoid repetition - in summary sections, only repeat critical issues (security, bugs, breaking changes). Important: Focus on issues directly visible in the diff. If you cannot verify something from the diff alone (e.g., missing context, unclear defaults, code not shown):
+Focus on high-value issues. Style suggestions are welcome if impactful, but not minor optimizations. Be concise: omit praise, change summaries, empty sections, and repeated conclusions. For each finding, include its file and line location, concrete failure scenario, impact, and suggested fix. Important: Focus on issues directly visible in the diff. If you cannot verify something from the diff alone (e.g., missing context, unclear defaults, code not shown):
 - Default: Skip the issue to avoid spam
 - Only ask for clarification if it's critical (security vulnerabilities, breaking bugs, data loss risks): \"Cannot verify [X] from diff - please confirm [specific question]\"
 - If making an inference about non-critical issues, explicitly label it: \"Inference (not verified): [observation]\"
 
 Review Structure:
-1. Start with a short overall feedback summary (1-2 sentences)
-2. Always include a \"🔒 Security\" section. If no security concerns found, state \"No security concerns identified\"
-3. Then provide other detailed findings (performance, code quality, best practices, etc.)
+1. Start with the \"## AI Code Review\" header
+2. List actionable findings as bullet points, ordered by severity; preserve enough detail to understand and fix each issue
+3. If there are no actionable findings, write only \"No actionable findings.\" before the verdict; do not add a summary or empty security section
 4. End with one of these verdicts ONLY:
    - \"✅ Approved\" (no issues found)
    - \"✅ Approved with recommendations\" (minor improvements suggested, but not blocking)
