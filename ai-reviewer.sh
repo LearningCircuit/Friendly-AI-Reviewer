@@ -59,12 +59,12 @@ INCLUDE_COMMIT_MESSAGES="${INCLUDE_COMMIT_MESSAGES:-true}"
 #   prompt. 0 lists no messages.
 # Non-numeric values fall back to the defaults.
 MAX_SUMMARY_COMMITS="${MAX_SUMMARY_COMMITS:-15}"
-MAX_COMMIT_MESSAGES="${MAX_COMMIT_MESSAGES:-5}"
+MAX_COMMIT_MESSAGES="${MAX_COMMIT_MESSAGES:-3}"
 if ! [[ "$MAX_SUMMARY_COMMITS" =~ ^[0-9]+$ ]]; then
     MAX_SUMMARY_COMMITS=15
 fi
 if ! [[ "$MAX_COMMIT_MESSAGES" =~ ^[0-9]+$ ]]; then
-    MAX_COMMIT_MESSAGES=5
+    MAX_COMMIT_MESSAGES=3
 fi
 
 # Include a short "X commits already on this PR" overview in the prompt, with

@@ -74,7 +74,7 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
   - Adjust lower for cost savings on smaller PRs
 - **MAX_DIFF_SIZE**: Maximum diff size in bytes (default: `800000` / 800KB)
 - **MAX_SUMMARY_COMMITS**: How many of the PR's most recent commits the commit overview reads (default: `15`; `0` shows the commit count only). The overview tells the model how many commits are already on the PR, who made them, and each author's added/removed line totals. Each summarized commit costs one extra GitHub API call, but only a handful of numbers enter the prompt, so this cap can stay generous.
-- **MAX_COMMIT_MESSAGES**: How many commit messages are fully quoted in the prompt (default: `5`). Fully quoted messages are the token-expensive part of the commit history, hence the separate, smaller cap — the overview (above) still covers many more commits.
+- **MAX_COMMIT_MESSAGES**: How many commit messages are fully quoted in the prompt (default: `3`). Fully quoted messages are the token-expensive part of the commit history, hence the separate, smaller cap — the overview (above) still covers many more commits.
 - **INCLUDE_COMMIT_SUMMARY**: Include the "There are X commits already on this PR" overview with per-author counts and line totals (default: `true`)
 - **STRUCTURED_OUTPUT**: Enforce a JSON Schema on the model's output via OpenRouter structured outputs (default: `true`)
   - Makes the provider emit valid, correctly-escaped JSON instead of the model hand-writing it — the main cause of "Invalid JSON response from AI model"
@@ -191,7 +191,7 @@ If you get a "Diff is too large" error:
 The workflow fetches and sends these repository elements to the AI:
 1. **Code Changes**: Full diff of modified files
 2. **PR Description**: Title and description text from the pull request
-3. **Commit Messages**: Up to `MAX_COMMIT_MESSAGES` most recent commit messages (default 5, excluding merges), plus a compact overview stating how many commits are already on the PR, the per-author commit counts, and each author's added/removed line totals (covering up to `MAX_SUMMARY_COMMITS` most recent commits, default 15)
+3. **Commit Messages**: Up to `MAX_COMMIT_MESSAGES` most recent commit messages (default 3, excluding merges), plus a compact overview stating how many commits are already on the PR, the per-author commit counts, and each author's added/removed line totals (covering up to `MAX_SUMMARY_COMMITS` most recent commits, default 15)
 4. **Human Comments**: Comments from human reviewers on the PR; bot comments are excluded, while human comments quoting a review header or marker are retained
 5. **Labels**: All repository labels with descriptions and colors
 6. **Previous AI Review**: Most recent bot-authored AI review comment only (limited to 10k chars), identified by its review header or `<!-- ai-code-review:sticky -->` marker

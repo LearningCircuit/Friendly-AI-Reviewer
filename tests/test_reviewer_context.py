@@ -317,8 +317,10 @@ print((path / "response.json").read_text())
         self.assertIn("across the 1 most recent of 4 commits", prompt)
         self.assertIn("- **carol**: 1 commit, +1/-1 lines", prompt)
         self.assertNotIn("- **alice**:", prompt)
-        # The message list keeps its own default cap and still shows the past.
-        self.assertIn("- feat: first", prompt)
+        # The message list keeps its own default cap (3) and still shows
+        # recent history beyond the overview's single-commit scope.
+        self.assertIn("- feat: second", prompt)
+        self.assertNotIn("- feat: first", prompt)
         stats_urls = [call[1] for call in self.commit_calls() if "/pulls/" not in call[1]]
         self.assertEqual(len(stats_urls), 1)
 
