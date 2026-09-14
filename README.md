@@ -19,6 +19,7 @@ This guide explains how to set up the automated AI PR review system using OpenRo
 **Latest Updates:**
 - **Thinking Model Support**: Now supports advanced reasoning models like Kimi K2 that use `<thinking>` tags
 - **Rich Context**: Includes PR descriptions, commit messages, and human comments for comprehensive reviews
+- **Commit Overview**: Tells the model how many commits are already on a PR, who authored them, and how many lines each author changed — with caps configured separately from the (token-heavy) fully quoted messages
 - **Higher Token Limits**: Default 64k tokens for complete reviews without truncation
 - **Smart Context Management**: Only fetches most recent AI review to save tokens
 - **Enhanced Error Handling**: Robust parsing of various AI response formats
@@ -63,7 +64,7 @@ The review is posted as a single concise comment on your pull request with appro
 
 The workflow is pre-configured with sensible defaults, but you can customize it by setting repository variables in **Settings** → **Secrets and variables** → **Actions** → **Variables**:
 
-- **AI_MODEL**: Change the AI model (default: `moonshotai/kimi-k2-thinking`)
+- **AI_MODEL**: Change the AI model (default: `z-ai/glm-5.3`)
   - See [OpenRouter models](https://openrouter.ai/models) for options
   - Recommended: Models with reasoning capabilities (Kimi K2, o1, etc.)
 - **AI_TEMPERATURE**: Adjust randomness (default: `0.1` for consistent reviews)
@@ -72,9 +73,15 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
   - For large PRs with thinking models, this prevents cut-off responses
   - Adjust lower for cost savings on smaller PRs
 - **MAX_DIFF_SIZE**: Maximum diff size in bytes (default: `800000` / 800KB)
+- **MAX_SUMMARY_COMMITS**: How many of the PR's most recent commits the commit overview reads (default: `15`; `0` shows the commit count only). The overview tells the model how many commits are already on the PR, who made them, and each author's added/removed line totals. Each summarized commit costs one extra GitHub API call, but only a handful of numbers enter the prompt, so this cap can stay generous.
+- **MAX_COMMIT_MESSAGES**: How many commit messages are fully quoted in the prompt (default: `3`). Fully quoted messages are the token-expensive part of the commit history, hence the separate, smaller cap — the overview (above) still covers many more commits.
+- **INCLUDE_COMMIT_SUMMARY**: Include the "There are X commits already on this PR" overview with per-author counts and line totals (default: `true`)
+- **MAX_HUMAN_COMMENTS**: How many of the newest human comments are included (default: `100`; `0` includes none at all). Comments are presented newest-first, so when this or the overall budget clips, the oldest go first — the latest feedback always survives.
+- **MAX_HUMAN_COMMENT_LENGTH**: Maximum characters per human comment; longer comments are clipped and marked " […truncated]" (default: `4000`)
+- **MAX_HUMAN_COMMENTS_TOTAL**: Overall byte budget for the human-comments block (`head -c`); when exceeded, the block is cut and marked (default: `20000`; `0` omits the block entirely)
 - **STRUCTURED_OUTPUT**: Enforce a JSON Schema on the model's output via OpenRouter structured outputs (default: `true`)
   - Makes the provider emit valid, correctly-escaped JSON instead of the model hand-writing it — the main cause of "Invalid JSON response from AI model"
-  - Requires a model/provider that supports `response_format` json_schema (most modern models do; e.g. Kimi K2, MiniMax M2.5)
+  - Requires a model/provider that supports `response_format` json_schema (most modern models do; e.g. GLM 5.3, Kimi K2, MiniMax M2.5)
   - Set to `false` only if your chosen model doesn't support structured outputs
 - **DEBUG_MODE**: Enable debug logging (default: `false`)
   - ⚠️ Warning: Exposes code diff in workflow logs when enabled
@@ -103,11 +110,11 @@ This will generate a fresh review of the current PR state.
 
 ## Review Results
 
-The AI reviews your code across all focus areas and reports actionable findings ordered by severity, with a location, failure scenario, impact, and suggested fix. It omits praise, change summaries, and empty sections. A clean review says "No actionable findings." followed by the verdict. Concise output does not lower the token budget available for reasoning and findings. The review is meant to assist human reviewers, not replace them.
+The AI reviews your code across all focus areas and reports actionable findings as bullets tagged **must fix**, **should fix**, or **nit** (in that order), each with a location, failure scenario, impact, and suggested fix. Inferences are highlighted with an explicit "Inference (not verified):" label so they are never mistaken for verified facts, and anything that cannot be verified from the diff but is worth a human look is collected in a final "Should be checked" section. The review omits praise, change summaries, and empty sections; a clean review says "No actionable findings." followed by the verdict. Concise output does not lower the token budget available for reasoning and findings. The review is meant to assist human reviewers, not replace them.
 
 ## Cost Estimation
 
-Costs with the default Kimi K2 thinking model are very affordable. Based on real usage data:
+Costs are very affordable. The ranges below are estimates carried over from real usage with the previous default model (Kimi K2) — re-check against current [OpenRouter pricing](https://openrouter.ai/models) for GLM 5.3:
 
 **Typical Costs:**
 - Small PR (< 1000 lines): $0.01 - $0.02
@@ -120,7 +127,7 @@ Costs with the default Kimi K2 thinking model are very affordable. Based on real
 - **Total cost: $0.01 - $0.05 per review**
 
 **Why So Affordable:**
-- Kimi K2 has competitive pricing (~$0.001-$0.003 per 1k tokens)
+- GLM 5.3 has competitive pricing (see OpenRouter)
 - Smart context management (only most recent AI review, limited commit history)
 - Most PRs are smaller than you think in token count
 - The 64k token limit is a ceiling, not typical usage
@@ -131,7 +138,7 @@ Costs with the default Kimi K2 thinking model are very affordable. Based on real
 - Number of human comments and commit messages included
 - OpenRouter provider routing (prices vary slightly by provider)
 
-Check [OpenRouter pricing](https://openrouter.ai/models) for current Kimi K2 rates.
+Check [OpenRouter pricing](https://openrouter.ai/models) for current GLM 5.3 rates.
 
 ## Customization
 
@@ -187,11 +194,11 @@ If you get a "Diff is too large" error:
 The workflow fetches and sends these repository elements to the AI:
 1. **Code Changes**: Full diff of modified files
 2. **PR Description**: Title and description text from the pull request
-3. **Commit Messages**: Up to 15 most recent commit messages (excluding merges)
-4. **Human Comments**: Comments from human reviewers on the PR; bot comments are excluded, while human comments quoting a review header or marker are retained
-5. **Labels**: All repository labels with descriptions and colors
-6. **Previous AI Review**: Most recent bot-authored AI review comment only (limited to 10k chars), identified by its review header or `<!-- ai-code-review:sticky -->` marker
-7. **CI/CD Status**: GitHub Actions check runs and build statuses
+3. **Commit Messages**: Up to `MAX_COMMIT_MESSAGES` most recent commit messages (default 3, excluding merges), plus a compact overview stating how many commits are already on the PR, the per-author commit counts, and each author's added/removed line totals (covering up to `MAX_SUMMARY_COMMITS` most recent commits, default 15)
+4. **Human Comments**: Comments from human reviewers on the PR, fetched across all pages (not just the first 30), newest first; bot comments are excluded, while human comments quoting a review header or marker are retained. Caps (`MAX_HUMAN_COMMENTS`, `MAX_HUMAN_COMMENT_LENGTH`, `MAX_HUMAN_COMMENTS_TOTAL`) clip the oldest first and mark any truncation.
+5. **Labels**: All repository labels with descriptions and colors (kept complete on purpose; the prompt instructs the model to only apply genuinely useful ones)
+6. **Previous AI Review**: Most recent bot-authored AI review comment only (limited to 10,000 bytes, marked when truncated), identified by its review header or `<!-- ai-code-review:sticky -->` marker
+7. **CI/CD Status**: A one-line summary of GitHub Actions check runs ("N of M checks passed") plus only the non-passing runs — failures, skipped, cancelled, timed out, or still running — listed individually (capped at 20 lines with a "+K more" line); fully green matrix shards no longer flood the prompt
 8. **PR Metadata**: Pull request details, head SHA, repository information
 9. **Files**: May include sensitive configuration files, keys, or credentials
 
@@ -219,4 +226,4 @@ For issues with:
 
 ## Development Tests
 
-Run `python3 -m unittest discover -s tests -v` to check the generated request and comment context filters. The tests use local substitutes for GitHub and OpenRouter, with no network requests or model calls. They require Python 3 and the script dependencies (Bash, jq, and Perl).
+Run `python3 -B -m unittest discover -s tests -v` to check the generated request and comment context filters. The tests use local substitutes for GitHub and OpenRouter, with no network requests or model calls. They require Python 3 and the script dependencies (Bash, jq, and Perl). The `-B` flag keeps Python from writing `__pycache__` into the tree (CI uses it for the same reason; `.gitignore` covers it as a backstop).
