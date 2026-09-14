@@ -48,6 +48,30 @@ INCLUDE_LABELS="${INCLUDE_LABELS:-true}"
 INCLUDE_PR_DESCRIPTION="${INCLUDE_PR_DESCRIPTION:-true}"
 INCLUDE_COMMIT_MESSAGES="${INCLUDE_COMMIT_MESSAGES:-true}"
 
+# Commit-history context is split by cost: the overview statistic (how many
+# commits are on the PR, who made them, added/removed line totals) is cheap in
+# tokens and read for many commits, while the fully quoted commit messages are
+# token-heavy and therefore capped separately.
+# - MAX_SUMMARY_COMMITS: how many past commits the overview statistic reads
+#   (per-commit line stats cost one GitHub API call each). 0 keeps the count/
+#   author line only.
+# - MAX_COMMIT_MESSAGES: how many commit messages are fully quoted in the
+#   prompt. 0 lists no messages.
+# Non-numeric values fall back to the defaults.
+MAX_SUMMARY_COMMITS="${MAX_SUMMARY_COMMITS:-15}"
+MAX_COMMIT_MESSAGES="${MAX_COMMIT_MESSAGES:-5}"
+if ! [[ "$MAX_SUMMARY_COMMITS" =~ ^[0-9]+$ ]]; then
+    MAX_SUMMARY_COMMITS=15
+fi
+if ! [[ "$MAX_COMMIT_MESSAGES" =~ ^[0-9]+$ ]]; then
+    MAX_COMMIT_MESSAGES=5
+fi
+
+# Include a short "X commits already on this PR" overview in the prompt, with
+# per-author commit counts and added/deleted line totals (see
+# MAX_SUMMARY_COMMITS for how many commits those cover).
+INCLUDE_COMMIT_SUMMARY="${INCLUDE_COMMIT_SUMMARY:-true}"
+
 # Read diff content from stdin
 DIFF_CONTENT=$(cat)
 
@@ -151,18 +175,102 @@ if [ "$INCLUDE_PR_DESCRIPTION" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_
     fi
 fi
 
-# Fetch commit messages (limit to 15 most recent, exclude merges)
-COMMIT_MESSAGES=""
-if [ "$INCLUDE_COMMIT_MESSAGES" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+# Fetch the PR's commit list once, shared by the commit-message list and the
+# commit summary. --paginate emits one JSON array per page back to back, so
+# slurp with jq -s and 'add' to merge the pages into a single array (this also
+# makes the "most recent N" truncation global instead of per-page).
+COMMITS_JSON="[]"
+if { [ "$INCLUDE_COMMIT_MESSAGES" = "true" ] || [ "$INCLUDE_COMMIT_SUMMARY" = "true" ]; } && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
     if [ "$DEBUG_MODE" = "true" ]; then
-        echo "🔍 Fetching commit messages..." >&2
+        echo "🔍 Fetching PR commits..." >&2
     fi
-    COMMIT_MESSAGES=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER/commits" --paginate \
-        --jq '[.[] | select(.commit.message | startswith("Merge") | not)] | .[-15:] | .[] | "- " + (.commit.message | split("\n")[0]) + (if (.commit.message | split("\n\n")[1]) then "\n  " + (.commit.message | split("\n\n")[1]) else "" end)' 2>/dev/null | head -c 2500 || echo "")
+    COMMITS_JSON=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER/commits" --paginate 2>/dev/null | jq -s 'add // []' || echo "[]")
+
+    if [ "$DEBUG_MODE" = "true" ]; then
+        echo "✅ Fetched $(echo "$COMMITS_JSON" | jq 'length') commit(s) from the PR" >&2
+    fi
+fi
+
+# Format the commit-message list from the cached commit JSON (limit to the
+# MAX_COMMIT_MESSAGES most recent, exclude merges). Fully quoted messages are
+# the token-expensive part of the history context, hence the separate, smaller
+# cap compared to the overview statistic.
+COMMIT_MESSAGES=""
+if [ "$INCLUDE_COMMIT_MESSAGES" = "true" ] && [ "$COMMITS_JSON" != "[]" ] && [ "$COMMITS_JSON" != "" ]; then
+    COMMIT_MESSAGES=$(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_COMMIT_MESSAGES" \
+        '[.[] | select(.commit.message | startswith("Merge") | not)]
+         | if $n > 0 then .[-$n:] else [] end
+         | .[] | "- " + (.commit.message | split("\n")[0]) + (if (.commit.message | split("\n\n")[1]) then "\n  " + (.commit.message | split("\n\n")[1]) else "" end)' 2>/dev/null | head -c 2500 || echo "")
 
     if [ "$DEBUG_MODE" = "true" ] && [ -n "$COMMIT_MESSAGES" ]; then
         COMMIT_COUNT=$(echo "$COMMIT_MESSAGES" | grep -c "^- " || echo "0")
-        echo "✅ Successfully fetched $COMMIT_COUNT commit messages" >&2
+        echo "✅ Kept $COMMIT_COUNT commit message(s) (limit $MAX_COMMIT_MESSAGES)" >&2
+    fi
+fi
+
+# Build the commit overview: how many commits are already on the PR, who made
+# them, and how many lines each author added/removed. The total comes from the
+# cached list; per-commit line stats are NOT part of that list response, so
+# each summarized commit costs one extra API call. MAX_SUMMARY_COMMITS bounds
+# that cost (0 skips the per-commit calls entirely). The overview is cheap in
+# tokens — a handful of numbers — so it may cover many more commits than the
+# fully quoted message list (MAX_COMMIT_MESSAGES).
+COMMIT_SUMMARY=""
+if [ "$INCLUDE_COMMIT_SUMMARY" = "true" ] && [ -n "$COMMITS_JSON" ] && [ "$COMMITS_JSON" != "[]" ]; then
+    NONMERGE_COUNT=$(echo "$COMMITS_JSON" | jq '[.[] | select(.commit.message | startswith("Merge") | not)] | length')
+    MERGE_COUNT=$(echo "$COMMITS_JSON" | jq 'length' )
+    MERGE_COUNT=$(( MERGE_COUNT - NONMERGE_COUNT ))
+
+    AUTHOR_LINES=""
+    if [ "$MAX_SUMMARY_COMMITS" -gt 0 ] && [ "$NONMERGE_COUNT" -gt 0 ]; then
+        STATS_FILE=$(mktemp) || { echo "Failed to create temporary file for commit stats"; exit 1; }
+        chmod 600 "$STATS_FILE"
+        # One "author<TAB>additions<TAB>deletions" row per listed commit;
+        # a failed stats fetch counts as zero rather than aborting the review.
+        while IFS=$'\t' read -r author sha; do
+            [ -n "$sha" ] || continue
+            line_stats=$(gh api "repos/$REPO_FULL_NAME/commits/$sha" \
+                --jq '"\(.stats.additions // 0)\t\(.stats.deletions // 0)"' 2>/dev/null || printf '0\t0')
+            printf '%s\t%s\n' "$author" "$line_stats" >> "$STATS_FILE"
+        done < <(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_SUMMARY_COMMITS" \
+            '[.[] | select(.commit.message | startswith("Merge") | not)]
+             | if $n > 0 then .[-$n:] else [] end
+             | .[] | [(.author.login // .commit.author.name), .sha] | @tsv')
+        # Aggregate per author; sort by added lines, then removed, then name.
+        AUTHOR_LINES=$(awk -F'\t' '{ count[$1]++; add[$1] += $2; del[$1] += $3 }
+            END { for (who in count) printf "%s\t%d\t%d\t%d\n", who, count[who], add[who], del[who] }' "$STATS_FILE" \
+            | LC_ALL=C sort -t$'\t' -k3,3nr -k4,4nr -k1,1)
+        rm -f "$STATS_FILE"
+    fi
+
+    if [ "$NONMERGE_COUNT" -gt 0 ]; then
+        if [ "$NONMERGE_COUNT" -eq 1 ]; then
+            SUMMARY_HEADER="There is 1 commit already on this PR"
+            COMMIT_WORD="commit"
+        else
+            SUMMARY_HEADER="There are $NONMERGE_COUNT commits already on this PR"
+            COMMIT_WORD="commits"
+        fi
+        [ "$MERGE_COUNT" -gt 0 ] && SUMMARY_HEADER="$SUMMARY_HEADER (excluding $MERGE_COUNT merge commit(s))"
+        if [ -n "$AUTHOR_LINES" ]; then
+            LISTED=$(( MAX_SUMMARY_COMMITS < NONMERGE_COUNT ? MAX_SUMMARY_COMMITS : NONMERGE_COUNT ))
+            [ "$LISTED" -eq "$NONMERGE_COUNT" ] \
+                && SCOPE="across all $NONMERGE_COUNT $COMMIT_WORD" \
+                || SCOPE="across the $LISTED most recent of $NONMERGE_COUNT $COMMIT_WORD"
+            SUMMARY_BULLETS=$(printf '%s\n' "$AUTHOR_LINES" | awk -F'\t' \
+                '{ word = ($2 == 1 ? "commit" : "commits")
+                   print sprintf("- **%s**: %s %s, +%s/-%s lines", $1, $2, word, $3, $4) }')
+            COMMIT_SUMMARY="Commit Summary:
+$SUMMARY_HEADER. Per-author commit counts and line totals $SCOPE:
+$SUMMARY_BULLETS"
+        else
+            COMMIT_SUMMARY="Commit Summary:
+$SUMMARY_HEADER."
+        fi
+
+        if [ "$DEBUG_MODE" = "true" ]; then
+            echo "✅ Commit summary: $SUMMARY_HEADER" >&2
+        fi
     fi
 fi
 
@@ -209,6 +317,16 @@ if [ -n "$PR_DESCRIPTION" ]; then
     PROMPT_PREFIX="${PROMPT_PREFIX}
 Pull Request Context:
 $PR_DESCRIPTION
+
+"
+fi
+
+# Add commit summary if available
+if [ -n "$COMMIT_SUMMARY" ]; then
+    PROMPT_PREFIX="${PROMPT_PREFIX}
+$COMMIT_SUMMARY
+
+Use the commit summary to gauge the PR's size and authorship; it records what already changed, not what should change.
 
 "
 fi

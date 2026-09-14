@@ -35,13 +35,33 @@ def comment(body, login="reviewer[bot]", user_type="Bot"):
     }
 
 
+def pull_commit(sha, message, login=None, name=None):
+    return {
+        "sha": sha,
+        "author": {"login": login} if login is not None else None,
+        "commit": {"author": {"name": name or login or "unknown"}, "message": message},
+    }
+
+
 class ReviewerRequestTests(unittest.TestCase):
     def run_reviewer(
-        self, comments=(), *, previous=True, human=True, response=None, config=None
+        self,
+        comments=(),
+        *,
+        previous=True,
+        human=True,
+        response=None,
+        config=None,
+        pull_commits=None,
+        commit_stats=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
             (path / "comments.json").write_text(json.dumps(comments))
+            (path / "pull-commits.json").write_text(
+                json.dumps(pull_commits if pull_commits is not None else [])
+            )
+            (path / "commit-stats.json").write_text(json.dumps(commit_stats or {}))
             expected = response if response is not None else CLEAN_REVIEW
             (path / "response.json").write_text(json.dumps({
                 "choices": [{
@@ -53,14 +73,28 @@ class ReviewerRequestTests(unittest.TestCase):
                 "gh": '''import json, os, subprocess, sys
 from pathlib import Path
 args = sys.argv[1:]
-assert args[:2] == ["api", "repos/example/repo/issues/123/comments"], args
-assert args[2] == "--jq" and len(args) == 4, args
+assert args[0] == "api", args
 path = Path(os.environ["FIXTURE_DIR"])
 with (path / "gh-calls.jsonl").open("a") as calls:
     calls.write(json.dumps(args) + "\\n")
-result = subprocess.run(["jq", "-r", args[3]],
-                        input=(path / "comments.json").read_text(), text=True)
-sys.exit(result.returncode)
+parts = args[1].split("?")[0].split("/")[3:]
+if parts == ["issues", "123", "comments"]:
+    assert args[2] == "--jq" and len(args) == 4, args
+    result = subprocess.run(["jq", "-r", args[3]],
+                            input=(path / "comments.json").read_text(), text=True)
+    sys.exit(result.returncode)
+if parts == ["pulls", "123", "commits"]:
+    assert args[2:] == ["--paginate"], args
+    sys.stdout.write((path / "pull-commits.json").read_text())
+    sys.exit(0)
+if len(parts) == 2 and parts[0] == "commits":
+    assert args[2] == "--jq" and len(args) == 4, args
+    stats = json.loads((path / "commit-stats.json").read_text())
+    assert parts[1] in stats, parts[1]
+    result = subprocess.run(["jq", "-r", args[3]],
+                            input=json.dumps(stats[parts[1]]), text=True)
+    sys.exit(result.returncode)
+sys.exit(f"unexpected gh api call: {args}")
 ''',
                 "curl": '''import os, sys
 from pathlib import Path
@@ -89,6 +123,7 @@ print((path / "response.json").read_text())
                 "INCLUDE_LABELS": "false",
                 "INCLUDE_PR_DESCRIPTION": "false",
                 "INCLUDE_COMMIT_MESSAGES": "false",
+                "INCLUDE_COMMIT_SUMMARY": "false",
             }
             environment.update(config or {})
             result = subprocess.run(
@@ -100,8 +135,18 @@ print((path / "response.json").read_text())
             self.assertEqual(json.loads(result.stdout), expected)
             calls_file = path / "gh-calls.jsonl"
             calls = calls_file.read_text().splitlines() if calls_file.exists() else []
-            self.assertEqual(len(calls), int(previous) + int(human))
+            self.gh_calls = [json.loads(call) for call in calls]
+            self.assertEqual(
+                len(self.gh_calls), int(previous) + int(human) + len(self.commit_calls())
+            )
             return json.loads((path / "request.json").read_text())
+
+    def commit_calls(self):
+        """GitHub API calls made for the commit history features."""
+        return [
+            call for call in getattr(self, "gh_calls", [])
+            if "pulls/123/commits" in call[1] or "/commits/" in call[1]
+        ]
 
     def test_concise_instructions_preserve_review_depth_and_protocol(self):
         request = self.run_reviewer(previous=False, human=False)
@@ -213,6 +258,113 @@ print((path / "response.json").read_text())
         )
         self.assertEqual(request["max_tokens"], 12345)
         self.assertNotIn("response_format", request)
+
+    def commit_fixture(self):
+        commits = [
+            pull_commit("a1", "feat: first", login="alice"),
+            pull_commit("a2", "feat: second", login="alice"),
+            pull_commit("a3", "fix: bob fix", name="Bob B"),
+            pull_commit("a4", "Merge branch 'x' into main", login="alice"),
+            pull_commit("a5", "feat: third", login="carol"),
+        ]
+        stats = {
+            "a1": {"stats": {"additions": 10, "deletions": 2}},
+            "a2": {"stats": {"additions": 20, "deletions": 3}},
+            "a3": {"stats": {"additions": 5, "deletions": 8}},
+            "a5": {"stats": {"additions": 1, "deletions": 1}},
+        }
+        return commits, stats
+
+    def test_commit_summary_counts_authors_and_lines(self):
+        commits, stats = self.commit_fixture()
+        request = self.run_reviewer(
+            previous=False, human=False,
+            pull_commits=commits, commit_stats=stats,
+            config={"INCLUDE_COMMIT_SUMMARY": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn(
+            "There are 4 commits already on this PR (excluding 1 merge commit(s))",
+            prompt,
+        )
+        self.assertIn("across all 4 commits", prompt)
+        self.assertIn("- **alice**: 2 commits, +30/-5 lines", prompt)
+        self.assertIn("- **Bob B**: 1 commit, +5/-8 lines", prompt)
+        self.assertIn("- **carol**: 1 commit, +1/-1 lines", prompt)
+        # Bullet order follows added lines, so the biggest author leads.
+        self.assertLess(
+            prompt.index("- **alice**"), prompt.index("- **carol**"),
+        )
+        # Line stats are fetched per listed non-merge commit only.
+        stats_urls = [call[1] for call in self.commit_calls() if "/pulls/" not in call[1]]
+        self.assertEqual(len(stats_urls), 4)
+        self.assertFalse(any("a4" in url for url in stats_urls), stats_urls)
+        # Only the summary block is present when messages are disabled.
+        self.assertNotIn("Commit History (showing development journey):", prompt)
+
+    def test_commit_summary_limit_is_independent_of_message_limit(self):
+        commits, stats = self.commit_fixture()
+        request = self.run_reviewer(
+            previous=False, human=False,
+            pull_commits=commits, commit_stats=stats,
+            config={
+                "INCLUDE_COMMIT_SUMMARY": "true",
+                "INCLUDE_COMMIT_MESSAGES": "true",
+                "MAX_SUMMARY_COMMITS": "1",
+            },
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("across the 1 most recent of 4 commits", prompt)
+        self.assertIn("- **carol**: 1 commit, +1/-1 lines", prompt)
+        self.assertNotIn("- **alice**:", prompt)
+        # The message list keeps its own default cap and still shows the past.
+        self.assertIn("- feat: first", prompt)
+        stats_urls = [call[1] for call in self.commit_calls() if "/pulls/" not in call[1]]
+        self.assertEqual(len(stats_urls), 1)
+
+    def test_commit_message_limit_is_configurable(self):
+        commits, stats = self.commit_fixture()
+        request = self.run_reviewer(
+            previous=False, human=False,
+            pull_commits=commits, commit_stats=stats,
+            config={"INCLUDE_COMMIT_MESSAGES": "true", "MAX_COMMIT_MESSAGES": "2"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("Commit History (showing development journey):", prompt)
+        self.assertIn("- feat: third", prompt)
+        self.assertIn("- fix: bob fix", prompt)
+        self.assertNotIn("- feat: first", prompt)
+        self.assertNotIn("- feat: second", prompt)
+        self.assertNotIn("Commit Summary:", prompt)
+        # No per-commit stats calls when the summary is disabled.
+        stats_urls = [call[1] for call in self.commit_calls() if "/pulls/" not in call[1]]
+        self.assertEqual(stats_urls, [])
+
+    def test_commit_summary_zero_reads_no_individual_commits(self):
+        commits, stats = self.commit_fixture()
+        request = self.run_reviewer(
+            previous=False, human=False,
+            pull_commits=commits, commit_stats=stats,
+            config={"INCLUDE_COMMIT_SUMMARY": "true", "MAX_SUMMARY_COMMITS": "0"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("There are 4 commits already on this PR", prompt)
+        self.assertNotIn("Per-author", prompt)
+        # One list call only: zero individual commit reads.
+        urls = [call[1] for call in self.commit_calls()]
+        self.assertEqual(len(urls), 1)
+        self.assertIn("pulls/123/commits", urls[0])
+
+    def test_commit_summary_singular_count_and_fallback_author(self):
+        commits = [pull_commit("solo", "fix: solo commit", name="Dana D")]
+        request = self.run_reviewer(
+            previous=False, human=False,
+            pull_commits=commits, commit_stats={"solo": {"stats": {"additions": 4, "deletions": 1}}},
+            config={"INCLUDE_COMMIT_SUMMARY": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("There is 1 commit already on this PR", prompt)
+        self.assertIn("- **Dana D**: 1 commit, +4/-1 lines", prompt)
 
 
 if __name__ == "__main__":
