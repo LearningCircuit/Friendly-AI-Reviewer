@@ -130,6 +130,24 @@ def is_ai_review:
         startswith("## AI Code Review") or contains("<!-- ai-code-review:sticky -->"));
 '
 
+# Exact merge-commit predicate for the commit list, shared by the message
+# selection and the overview counts: a commit with more than one parent IS a
+# merge. Message-prefix heuristics ("Merge...") misfire on subjects like
+# "MergeableHashMap: fix iteration".
+COMMIT_CLASSIFIERS='
+def is_merge:
+    (.parents | length) > 1;
+'
+
+# head -c cuts at a byte boundary, which can split a multibyte UTF-8
+# character and leave an invalid sequence at the end of a block — jq (which
+# builds the request payload) rejects invalid UTF-8, so the whole review
+# would fail over one clipped emoji. Strip a trailing incomplete sequence;
+# complete characters are never touched.
+strip_partial_utf8() {
+    perl -pe 's/(?:[\xF0-\xF4][\x80-\xBF]{0,2}|[\xE0-\xEF][\x80-\xBF]?|[\xC2-\xDF])$//'
+}
+
 # Fetch the PR's comment list once, shared by the previous-AI-review and
 # human-comment context. --paginate is required: a plain gh api call returns
 # only the first page (GitHub default: 30 comments, oldest first), which on
@@ -147,7 +165,7 @@ fi
 PREVIOUS_REVIEWS=""
 if [ "$INCLUDE_PREVIOUS_REVIEWS" = "true" ] && [ "$COMMENTS_JSON" != "[]" ]; then
     PREVIOUS_REVIEWS_FULL=$(echo "$COMMENTS_JSON" | jq -r "$COMMENT_CLASSIFIERS"'[.[] | select(is_ai_review)] | last | if . then "### Previous AI Review (" + .created_at + "):\n" + .body + "\n---\n" else "" end' 2>/dev/null || echo "")
-    PREVIOUS_REVIEWS=$(printf '%s' "$PREVIOUS_REVIEWS_FULL" | head -c 10000)
+    PREVIOUS_REVIEWS=$(printf '%s' "$PREVIOUS_REVIEWS_FULL" | head -c 10000 | strip_partial_utf8)
     # Same truncation contract as every other budget: detect from the source
     # length and mark, so a cut-off prior review (verdict, "Should be checked"
     # items) is never mistaken for a complete one.
@@ -176,7 +194,7 @@ if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ "$COMMENTS_JSON" != "[]" ] && [ "
                     then ((.body // "")[0:$c] + " […truncated]")
                     else (.body // "") end))
             | join("\n\n---\n\n")' 2>/dev/null || echo "")
-    HUMAN_COMMENTS=$(printf '%s' "$HUMAN_COMMENTS_FULL" | head -c "$MAX_HUMAN_COMMENTS_TOTAL")
+    HUMAN_COMMENTS=$(printf '%s' "$HUMAN_COMMENTS_FULL" | head -c "$MAX_HUMAN_COMMENTS_TOTAL" | strip_partial_utf8)
     # Detect clipping from the source length, not the result's byte count:
     # command substitution strips trailing newlines, so a comment ending in
     # blank lines could otherwise shrink the clipped result below the budget
@@ -251,8 +269,16 @@ if [ "$INCLUDE_PR_DESCRIPTION" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_
     if [ "$DEBUG_MODE" = "true" ]; then
         echo "🔍 Fetching PR title and description..." >&2
     fi
-    PR_DESCRIPTION=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" \
-        --jq '"**PR Title**: " + .title + "\n\n**Description**:\n" + (.body // "No description provided")' 2>/dev/null | head -c 2000 || echo "")
+    PR_DESCRIPTION_FULL=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" \
+        --jq '"**PR Title**: " + .title + "\n\n**Description**:\n" + (.body // "No description provided")' 2>/dev/null || echo "")
+    PR_DESCRIPTION=$(printf '%s' "$PR_DESCRIPTION_FULL" | head -c 2000 | strip_partial_utf8)
+    # Same truncation contract as every other budget: detect from the source
+    # length and mark, so a cut-off description is never mistaken for the
+    # complete one.
+    if [ "$(printf '%s' "$PR_DESCRIPTION_FULL" | wc -c)" -gt 2000 ]; then
+        PR_DESCRIPTION="$PR_DESCRIPTION
+[…truncated at 2000 bytes]"
+    fi
 
     if [ "$DEBUG_MODE" = "true" ] && [ -n "$PR_DESCRIPTION" ]; then
         echo "✅ Successfully fetched PR description" >&2
@@ -282,10 +308,10 @@ fi
 COMMIT_MESSAGES=""
 if [ "$INCLUDE_COMMIT_MESSAGES" = "true" ] && [ "$COMMITS_JSON" != "[]" ] && [ "$COMMITS_JSON" != "" ]; then
     COMMIT_MESSAGES_FULL=$(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_COMMIT_MESSAGES" \
-        '[.[] | select(.commit.message | startswith("Merge") | not)]
+        "$COMMIT_CLASSIFIERS"'[.[] | select(is_merge | not)]
          | if $n > 0 then .[-$n:] else [] end
          | .[] | "- " + (.commit.message | split("\n")[0]) + (if (.commit.message | split("\n\n")[1]) then "\n  " + (.commit.message | split("\n\n")[1]) else "" end)' 2>/dev/null || echo "")
-    COMMIT_MESSAGES=$(printf '%s' "$COMMIT_MESSAGES_FULL" | head -c 2500)
+    COMMIT_MESSAGES=$(printf '%s' "$COMMIT_MESSAGES_FULL" | head -c 2500 | strip_partial_utf8)
     # Same contract as the human-comments budget: detect clipping from the
     # source length and mark it, so the model knows messages were cut.
     if [ "$(printf '%s' "$COMMIT_MESSAGES_FULL" | wc -c)" -gt 2500 ]; then
@@ -308,7 +334,7 @@ fi
 # fully quoted message list (MAX_COMMIT_MESSAGES).
 COMMIT_SUMMARY=""
 if [ "$INCLUDE_COMMIT_SUMMARY" = "true" ] && [ -n "$COMMITS_JSON" ] && [ "$COMMITS_JSON" != "[]" ]; then
-    NONMERGE_COUNT=$(echo "$COMMITS_JSON" | jq '[.[] | select(.commit.message | startswith("Merge") | not)] | length')
+    NONMERGE_COUNT=$(echo "$COMMITS_JSON" | jq "$COMMIT_CLASSIFIERS"'[.[] | select(is_merge | not)] | length')
     MERGE_COUNT=$(echo "$COMMITS_JSON" | jq 'length' )
     MERGE_COUNT=$(( MERGE_COUNT - NONMERGE_COUNT ))
 
@@ -337,7 +363,7 @@ if [ "$INCLUDE_COMMIT_SUMMARY" = "true" ] && [ -n "$COMMITS_JSON" ] && [ "$COMMI
             STATS_ROWS+=$(printf '%s\t%s' "$author" "$line_stats")
             STATS_ROWS+=$'\n'
         done < <(echo "$COMMITS_JSON" | jq -r --argjson n "$MAX_SUMMARY_COMMITS" \
-            '[.[] | select(.commit.message | startswith("Merge") | not)]
+            "$COMMIT_CLASSIFIERS"'[.[] | select(is_merge | not)]
              | if $n > 0 then .[-$n:] else [] end
              | .[] | [(.author.login // .commit.author.name), .sha] | @tsv')
         # Aggregate per author; sort by added lines, then removed, then name.

@@ -35,9 +35,11 @@ def comment(body, login="reviewer[bot]", user_type="Bot"):
     }
 
 
-def pull_commit(sha, message, login=None, name=None):
+def pull_commit(sha, message, login=None, name=None, merge=False):
+    parents = [{"sha": f"{sha}-parent-1"}, {"sha": f"{sha}-parent-2"}] if merge else [{"sha": f"{sha}-parent-1"}]
     return {
         "sha": sha,
+        "parents": parents,
         "author": {"login": login} if login is not None else None,
         "commit": {"author": {"name": name or login or "unknown"}, "message": message},
     }
@@ -56,6 +58,7 @@ class ReviewerRequestTests(unittest.TestCase):
         commit_stats=None,
         check_runs=None,
         labels=None,
+        pr=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -65,7 +68,7 @@ class ReviewerRequestTests(unittest.TestCase):
             )
             (path / "commit-stats.json").write_text(json.dumps(commit_stats or {}))
             (path / "pr.json").write_text(json.dumps(
-                {"number": 123, "head": {"sha": "abc"}}
+                pr if pr is not None else {"number": 123, "head": {"sha": "abc"}}
             ))
             (path / "check-runs.json").write_text(json.dumps(
                 {"total_count": len(check_runs or []), "check_runs": check_runs or []}
@@ -312,7 +315,7 @@ print((path / "response.json").read_text())
                 "indexing.\n- **nit** — file.py:40: \"Inference (not verified): \" "
                 "the loop could early-exit.\n\nShould be checked:\n- Cannot verify "
                 "the migration is reversible from diff - please confirm a "
-                "downgrade path exists.\n\n❌ Request changes\n\n{FOOTER}"
+                f"downgrade path exists.\n\n❌ Request changes\n\n{FOOTER}"
             ),
             "fail_pass_workflow": "fail",
             "labels_added": ["bug", "tests"],
@@ -326,13 +329,17 @@ print((path / "response.json").read_text())
 
     def commit_fixture(self):
         commits = [
+            # A subject starting with "Merge" on a single-parent commit: the
+            # exact parents-based predicate must count it.
+            pull_commit("a0", "MergeableHashMap: fix iteration", login="dana"),
             pull_commit("a1", "feat: first", login="alice"),
             pull_commit("a2", "feat: second", login="alice"),
             pull_commit("a3", "fix: bob fix", name="Bob B"),
-            pull_commit("a4", "Merge branch 'x' into main", login="alice"),
+            pull_commit("a4", "Merge branch 'x' into main", login="alice", merge=True),
             pull_commit("a5", "feat: third", login="carol"),
         ]
         stats = {
+            "a0": {"stats": {"additions": 6, "deletions": 2}},
             "a1": {"stats": {"additions": 10, "deletions": 2}},
             "a2": {"stats": {"additions": 20, "deletions": 3}},
             "a3": {"stats": {"additions": 5, "deletions": 8}},
@@ -349,20 +356,22 @@ print((path / "response.json").read_text())
         )
         prompt = request["messages"][0]["content"]
         self.assertIn(
-            "There are 4 commits already on this PR (excluding 1 merge commit(s))",
+            "There are 5 commits already on this PR (excluding 1 merge commit(s))",
             prompt,
         )
-        self.assertIn("across all 4 commits", prompt)
+        self.assertIn("across all 5 commits", prompt)
         self.assertIn("- **alice**: 2 commits, +30/-5 lines", prompt)
         self.assertIn("- **Bob B**: 1 commit, +5/-8 lines", prompt)
         self.assertIn("- **carol**: 1 commit, +1/-1 lines", prompt)
+        # The merge-sounding subject is counted, not skipped.
+        self.assertIn("- **dana**: 1 commit, +6/-2 lines", prompt)
         # Bullet order follows added lines, so the biggest author leads.
         self.assertLess(
             prompt.index("- **alice**"), prompt.index("- **carol**"),
         )
         # Line stats are fetched per listed non-merge commit only.
         stats_urls = [call[1] for call in self.commit_calls() if "/pulls/" not in call[1]]
-        self.assertEqual(len(stats_urls), 4)
+        self.assertEqual(len(stats_urls), 5)
         self.assertFalse(any("a4" in url for url in stats_urls), stats_urls)
         # Only the summary block is present when messages are disabled.
         self.assertNotIn("Commit History (showing development journey):", prompt)
@@ -379,7 +388,7 @@ print((path / "response.json").read_text())
             },
         )
         prompt = request["messages"][0]["content"]
-        self.assertIn("across the 1 most recent of 4 commits", prompt)
+        self.assertIn("across the 1 most recent of 5 commits", prompt)
         self.assertIn("- **carol**: 1 commit, +1/-1 lines", prompt)
         self.assertNotIn("- **alice**:", prompt)
         # The message list keeps its own default cap (3) and still shows
@@ -415,7 +424,7 @@ print((path / "response.json").read_text())
             config={"INCLUDE_COMMIT_SUMMARY": "true", "MAX_SUMMARY_COMMITS": "0"},
         )
         prompt = request["messages"][0]["content"]
-        self.assertIn("There are 4 commits already on this PR", prompt)
+        self.assertIn("There are 5 commits already on this PR", prompt)
         self.assertNotIn("Per-author", prompt)
         # One list call only: zero individual commit reads.
         urls = [call[1] for call in self.commit_calls()]
@@ -514,6 +523,31 @@ print((path / "response.json").read_text())
         )
         prompt = request["messages"][0]["content"]
         self.assertIn("[…truncated at 50 bytes]", prompt)
+
+    def test_multibyte_comment_survives_a_byte_boundary_clip(self):
+        # The budget lands mid-emoji: without stripping the partial UTF-8
+        # sequence, jq rejects the prompt when building the request payload
+        # and the whole review fails. The header is 34 bytes, so a 39-byte
+        # budget keeps one complete 4-byte emoji and cuts one byte into the
+        # next.
+        request = self.run_reviewer(
+            [comment("😀" * 20, "alice", "User")], previous=False,
+            config={"MAX_HUMAN_COMMENTS_TOTAL": "39"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("😀", prompt)
+        self.assertIn("[…truncated at 39 bytes]", prompt)
+
+    def test_pr_description_clip_is_marked(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            pr={"number": 123, "head": {"sha": "abc"},
+                "title": "A change", "body": "d" * 3000},
+            config={"INCLUDE_PR_DESCRIPTION": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("**PR Title**: A change", prompt)
+        self.assertIn("[…truncated at 2000 bytes]", prompt)
 
     def test_human_comments_exactly_filling_budget_are_not_marked(self):
         # "**alice** (2026-09-12T10:00:00Z):\n" is 34 characters; a 16-char
