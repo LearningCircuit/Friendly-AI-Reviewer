@@ -7,6 +7,7 @@ No network requests or model calls are made.
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -103,10 +104,9 @@ if parts == ["pulls", "123", "commits"]:
     sys.stdout.write((path / "pull-commits.json").read_text())
     sys.exit(0)
 if parts == ["pulls", "123"]:
-    assert args[2] == "--jq" and len(args) == 4, args
-    result = subprocess.run(["jq", "-r", args[3]],
-                            input=(path / "pr.json").read_text(), text=True)
-    sys.exit(result.returncode)
+    assert len(args) == 2, args
+    sys.stdout.write((path / "pr.json").read_text())
+    sys.exit(0)
 if parts == ["commits", "abc", "check-runs"]:
     assert args[2:] == ["--paginate"], args
     document = json.loads((path / "check-runs.json").read_text())
@@ -549,6 +549,34 @@ print((path / "response.json").read_text())
         self.assertIn("**PR Title**: A change", prompt)
         self.assertIn("[…truncated at 2000 bytes]", prompt)
 
+    def test_pr_object_fetched_once_for_description_and_check_runs(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            check_runs=[{"name": "lint", "status": "completed", "conclusion": "success"}],
+            pr={"number": 123, "head": {"sha": "abc"}, "title": "T", "body": "B"},
+            config={"INCLUDE_CHECK_RUNS": "true", "INCLUDE_PR_DESCRIPTION": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("**PR Title**: T", prompt)
+        self.assertIn("All 1 checks passed.", prompt)
+        pulls_calls = [call for call in self.gh_calls if call[1].endswith("/pulls/123")]
+        self.assertEqual(len(pulls_calls), 1, pulls_calls)
+
+    def test_non_passing_check_list_is_capped(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            check_runs=[
+                {"name": f"fail-{index}", "status": "completed", "conclusion": "failure"}
+                for index in range(25)
+            ],
+            config={"INCLUDE_CHECK_RUNS": "true"},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertIn("0 of 25 checks passed. Non-passing checks:", prompt)
+        self.assertIn("- **fail-19**:", prompt)
+        self.assertIn("+ 5 more non-passing run(s) not listed", prompt)
+        self.assertNotIn("- **fail-20**", prompt)
+
     def test_human_comments_exactly_filling_budget_are_not_marked(self):
         # "**alice** (2026-09-12T10:00:00Z):\n" is 34 characters; a 16-char
         # body makes the block exactly 50 — no clip, so no marker.
@@ -648,16 +676,22 @@ print((path / "response.json").read_text())
             prompt,
         )
 
-    def test_workflow_forwards_reviewer_configuration(self):
-        workflow = (Path(__file__).resolve().parents[1]
-                    / ".github" / "workflows" / "ai-code-reviewer.yml").read_text()
-        for name in (
-            "AI_MODEL", "MAX_DIFF_SIZE", "STRUCTURED_OUTPUT",
-            "MAX_SUMMARY_COMMITS", "MAX_COMMIT_MESSAGES", "INCLUDE_COMMIT_SUMMARY",
-            "MAX_HUMAN_COMMENTS", "MAX_HUMAN_COMMENT_LENGTH",
-            "MAX_HUMAN_COMMENTS_TOTAL",
-        ):
-            self.assertIn(name + ": ${{ vars." + name, workflow)
+    def test_workflow_forwards_every_configurable_script_knob(self):
+        root = Path(__file__).resolve().parents[1]
+        script = (root / "ai-reviewer.sh").read_text()
+        workflow = (root / ".github" / "workflows" / "ai-code-reviewer.yml").read_text()
+        # Every ${VAR:-default} knob in the script must have a forwarding
+        # line in the workflow, derived from the script itself so a new knob
+        # fails this test until it is forwarded. Per-run values that come
+        # from the event (not repository variables) are excluded.
+        knobs = sorted(set(re.findall(r"\$\{([A-Z][A-Z_]+):-", script)))
+        self.assertIn("AI_MODEL", knobs)
+        self.assertIn("MAX_HUMAN_COMMENTS_TOTAL", knobs)
+        not_repository_variables = {"REPO_FULL_NAME"}
+        for name in knobs:
+            if name in not_repository_variables:
+                continue
+            self.assertIn(name + ": ${{ vars." + name, workflow, name)
 
 
 if __name__ == "__main__":

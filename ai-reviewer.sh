@@ -205,15 +205,26 @@ if [ "$INCLUDE_HUMAN_COMMENTS" = "true" ] && [ "$COMMENTS_JSON" != "[]" ] && [ "
     fi
 fi
 
+# Fetch the PR object once, shared by the check-runs context (head SHA) and
+# the PR-description context — both default-on, so a per-feature fetch would
+# hit the same endpoint twice on every review.
+PR_JSON=""
+if { [ "$INCLUDE_CHECK_RUNS" = "true" ] || [ "$INCLUDE_PR_DESCRIPTION" = "true" ]; } && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+    PR_JSON=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" 2>/dev/null || echo "")
+fi
+
 # Fetch GitHub Actions check runs status (if PR_NUMBER and REPO_FULL_NAME are set).
 # Successful checks are collapsed into a one-line count; every non-passing run
 # (failure, skipped, cancelled, timed out, still running) is listed
 # individually — green matrix shards must not flood the prompt, but skipped
-# runs can matter, so they stay visible.
+# runs can matter, so they stay visible. The non-passing list is capped at 20
+# lines with a "+K more" line, so a broadly red matrix (shared dependency
+# failure, mass cancellation) cannot trade the green-shard flood for a
+# red-shard flood exactly when the diff context is largest.
 CHECK_RUNS_STATUS=""
-if [ "$INCLUDE_CHECK_RUNS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
-    # Get the head SHA of the PR
-    HEAD_SHA=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" --jq '.head.sha' 2>/dev/null || echo "")
+if [ "$INCLUDE_CHECK_RUNS" = "true" ] && [ -n "$PR_JSON" ]; then
+    # Get the head SHA from the shared PR object
+    HEAD_SHA=$(echo "$PR_JSON" | jq -r '.head.sha // empty' 2>/dev/null)
 
     if [ -n "$HEAD_SHA" ]; then
         # Paginate (the endpoint returns 30 runs per page by default — big
@@ -223,8 +234,9 @@ if [ "$INCLUDE_CHECK_RUNS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL
         CHECK_RUNS_SUMMARY=$(echo "$CHECK_RUNS_JSON" | jq \
             '{total: length,
               passed: [.[] | select(.conclusion == "success")] | length,
-              other: [.[] | select(.conclusion != "success")
-                      | "- **\(.name)**: \(.status)\(if .conclusion then " (\(.conclusion))" else "" end)"]}' 2>/dev/null || echo "")
+              other: ([.[] | select(.conclusion != "success")
+                       | "- **\(.name)**: \(.status)\(if .conclusion then " (\(.conclusion))" else "" end)"]
+                      | if length > 20 then .[0:20] + ["+ \(length - 20) more non-passing run(s) not listed"] else . end)}' 2>/dev/null || echo "")
 
         if [ -n "$CHECK_RUNS_SUMMARY" ] && [ "$CHECK_RUNS_SUMMARY" != "null" ]; then
             TOTAL_CHECKS=$(echo "$CHECK_RUNS_SUMMARY" | jq -r '.total // 0')
@@ -263,14 +275,14 @@ if [ "$INCLUDE_LABELS" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAM
     fi
 fi
 
-# Fetch PR title and description
+# Fetch PR title and description (from the shared PR object)
 PR_DESCRIPTION=""
-if [ "$INCLUDE_PR_DESCRIPTION" = "true" ] && [ -n "$PR_NUMBER" ] && [ -n "$REPO_FULL_NAME" ] && [ -n "$GITHUB_TOKEN" ]; then
+if [ "$INCLUDE_PR_DESCRIPTION" = "true" ] && [ -n "$PR_JSON" ]; then
     if [ "$DEBUG_MODE" = "true" ]; then
-        echo "🔍 Fetching PR title and description..." >&2
+        echo "🔍 Extracting PR title and description..." >&2
     fi
-    PR_DESCRIPTION_FULL=$(gh api "repos/$REPO_FULL_NAME/pulls/$PR_NUMBER" \
-        --jq '"**PR Title**: " + .title + "\n\n**Description**:\n" + (.body // "No description provided")' 2>/dev/null || echo "")
+    PR_DESCRIPTION_FULL=$(echo "$PR_JSON" | jq -r \
+        '"**PR Title**: " + .title + "\n\n**Description**:\n" + (.body // "No description provided")' 2>/dev/null || echo "")
     PR_DESCRIPTION=$(printf '%s' "$PR_DESCRIPTION_FULL" | head -c 2000 | strip_partial_utf8)
     # Same truncation contract as every other budget: detect from the source
     # length and mark, so a cut-off description is never mistaken for the

@@ -42,6 +42,12 @@ jobs:
           MAX_SUMMARY_COMMITS: ${{ vars.MAX_SUMMARY_COMMITS || '15' }}
           MAX_COMMIT_MESSAGES: ${{ vars.MAX_COMMIT_MESSAGES || '3' }}
           INCLUDE_COMMIT_SUMMARY: ${{ vars.INCLUDE_COMMIT_SUMMARY || 'true' }}
+          INCLUDE_PREVIOUS_REVIEWS: ${{ vars.INCLUDE_PREVIOUS_REVIEWS || 'true' }}
+          INCLUDE_HUMAN_COMMENTS: ${{ vars.INCLUDE_HUMAN_COMMENTS || 'true' }}
+          INCLUDE_CHECK_RUNS: ${{ vars.INCLUDE_CHECK_RUNS || 'true' }}
+          INCLUDE_LABELS: ${{ vars.INCLUDE_LABELS || 'true' }}
+          INCLUDE_PR_DESCRIPTION: ${{ vars.INCLUDE_PR_DESCRIPTION || 'true' }}
+          INCLUDE_COMMIT_MESSAGES: ${{ vars.INCLUDE_COMMIT_MESSAGES || 'true' }}
           MAX_HUMAN_COMMENTS: ${{ vars.MAX_HUMAN_COMMENTS || '100' }}
           MAX_HUMAN_COMMENT_LENGTH: ${{ vars.MAX_HUMAN_COMMENT_LENGTH || '4000' }}
           MAX_HUMAN_COMMENTS_TOTAL: ${{ vars.MAX_HUMAN_COMMENTS_TOTAL || '20000' }}
