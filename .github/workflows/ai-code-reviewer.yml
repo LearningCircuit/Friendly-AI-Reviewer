@@ -8,6 +8,11 @@ jobs:
   comprehensive-review:
     name: AI Code Review
     runs-on: ubuntu-latest
+    # Bound the job: the model call is capped at 25 minutes by curl's
+    # --max-time, and the retry adds a second full attempt — the worst case
+    # is ~50 minutes plus overhead, so 60 keeps the bound above every
+    # legitimate path while still far under the 6-hour default.
+    timeout-minutes: 60
     if: github.event.action == 'labeled' && github.event.label.name == 'ai_code_review'
     permissions:
       contents: read
@@ -15,7 +20,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (SHA-pinned: tags can be moved)
         with:
           fetch-depth: 0
 
@@ -54,6 +59,8 @@ jobs:
           MAX_HUMAN_COMMENTS: ${{ vars.MAX_HUMAN_COMMENTS || '100' }}
           MAX_HUMAN_COMMENT_LENGTH: ${{ vars.MAX_HUMAN_COMMENT_LENGTH || '4000' }}
           MAX_HUMAN_COMMENTS_TOTAL: ${{ vars.MAX_HUMAN_COMMENTS_TOTAL || '20000' }}
+          CUSTOM_PROMPT: ${{ vars.CUSTOM_PROMPT }}
+          CUSTOM_PROMPT_FILE: ${{ vars.CUSTOM_PROMPT_FILE }}
           STRUCTURED_OUTPUT: ${{ vars.STRUCTURED_OUTPUT || 'true' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO_FULL_NAME: ${{ github.repository }}

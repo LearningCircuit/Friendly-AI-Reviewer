@@ -20,6 +20,7 @@ This guide explains how to set up the automated AI PR review system using OpenRo
 - **Thinking Model Support**: Now supports advanced reasoning models like Kimi K2 that use `<thinking>` tags
 - **Rich Context**: Includes PR descriptions, commit messages, and human comments for comprehensive reviews
 - **Commit Overview**: Tells the model how many commits are already on a PR, who authored them, and how many lines each author changed — with caps configured separately from the (token-heavy) fully quoted messages
+- **Repository Instructions**: `CUSTOM_PROMPT` / `CUSTOM_PROMPT_FILE` add house rules on top of the standard contract; findings are split into **New problems** (severity-tagged, actionable) and **Pre-existing problems** (documentation and issue extraction only, never blocking)
 - **Higher Token Limits**: Default 64k tokens for complete reviews without truncation
 - **Smart Context Management**: Only fetches most recent AI review to save tokens
 - **Enhanced Error Handling**: Robust parsing of various AI response formats
@@ -72,13 +73,15 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
   - High limit ensures comprehensive reviews without truncation
   - For large PRs with thinking models, this prevents cut-off responses
   - Adjust lower for cost savings on smaller PRs
-- **MAX_DIFF_SIZE**: Maximum diff size in bytes (default: `800000` / 800KB)
+- **MAX_DIFF_SIZE**: Maximum diff size in bytes (the script's built-in default is `5000000` / 5MB; this repository's workflow passes `800000` / 800KB as its default — the README reflects the workflow value you actually run with)
 - **MAX_SUMMARY_COMMITS**: How many of the PR's most recent commits the commit overview reads (default: `15`; `0` shows the commit count only). The overview tells the model how many commits are already on the PR, who made them, and each author's added/removed line totals. Each summarized commit costs one extra GitHub API call, but only a handful of numbers enter the prompt, so this cap can stay generous.
 - **MAX_COMMIT_MESSAGES**: How many commit messages are fully quoted in the prompt (default: `3`). Fully quoted messages are the token-expensive part of the commit history, hence the separate, smaller cap — the overview (above) still covers many more commits.
 - **INCLUDE_COMMIT_SUMMARY**: Include the "There are X commits already on this PR" overview with per-author counts and line totals (default: `true`)
 - **MAX_HUMAN_COMMENTS**: How many of the newest human comments are included (default: `100`; `0` includes none at all). Comments are presented newest-first, so when this or the overall budget clips, the oldest go first — the latest feedback always survives.
-- **MAX_HUMAN_COMMENT_LENGTH**: Maximum characters per human comment; longer comments are clipped and marked " […truncated]" (default: `4000`)
+- **MAX_HUMAN_COMMENT_LENGTH**: Maximum characters per human comment; longer comments are clipped and marked " […truncated]" (default: `4000`; `0` reduces every comment to its author header and the truncation marker)
 - **MAX_HUMAN_COMMENTS_TOTAL**: Overall byte budget for the human-comments block (`head -c`); when exceeded, the block is cut and marked (default: `20000`; `0` omits the block entirely)
+- **CUSTOM_PROMPT**: Additional review instructions appended on top of the standard review contract — house rules, focus areas, conventions (default: empty). Combined with `CUSTOM_PROMPT_FILE`, the inline text comes first. Capped at 8000 bytes, marked when truncated.
+- **CUSTOM_PROMPT_FILE**: Path to a file with additional review instructions (default: empty). The file is read from whatever the workflow checks out: in this repository's own workflow that is the PR merge ref, so a PR author can override the instructions for their own review; consumers using `pull_request_target` with a base-branch checkout (like local-deep-research) get the stronger property that the file is trusted base content. Point the `CUSTOM_PROMPT_FILE` repository variable at a committed file (e.g. `.github/ai-review-instructions.md`). An unreadable path warns in the logs and is skipped.
 - **STRUCTURED_OUTPUT**: Enforce a JSON Schema on the model's output via OpenRouter structured outputs (default: `true`)
   - Makes the provider emit valid, correctly-escaped JSON instead of the model hand-writing it — the main cause of "Invalid JSON response from AI model"
   - Requires a model/provider that supports `response_format` json_schema (most modern models do; e.g. GLM 5.3, Kimi K2, MiniMax M2.5)
@@ -110,7 +113,7 @@ This will generate a fresh review of the current PR state.
 
 ## Review Results
 
-The AI reviews your code across all focus areas and reports actionable findings as bullets tagged **must fix**, **should fix**, or **nit** (in that order), each with a location, failure scenario, impact, and suggested fix. Inferences are highlighted with an explicit "Inference (not verified):" label so they are never mistaken for verified facts, and anything that cannot be verified from the diff but is worth a human look is collected in a final "Should be checked" section. The review omits praise, change summaries, and empty sections; a clean review says "No actionable findings." followed by the verdict. Concise output does not lower the token budget available for reasoning and findings. The review is meant to assist human reviewers, not replace them.
+The AI reviews your code across all focus areas and reports problems in two separate sections: **New problems** (introduced by the PR) as bullets tagged **must fix**, **should fix**, or **nit** (in that order), each with a location, failure scenario, impact, and suggested fix; and **Pre-existing problems** (predating the PR) as one-liners for documentation and issue extraction — they are not to be fixed in this PR and never influence the verdict. Inferences are highlighted with an explicit "Inference (not verified):" label so they are never mistaken for verified facts, and anything that cannot be verified from the diff but is worth a human look is collected in a final "Should be checked" section. The review omits praise, change summaries, and empty sections; a clean review says "No actionable findings." followed by the verdict. Concise output does not lower the token budget available for reasoning and findings. The review is meant to assist human reviewers, not replace them.
 
 ## Cost Estimation
 
@@ -171,7 +174,7 @@ You can adjust these to match your team's priorities.
 If you get a "Diff is too large" error:
 - Split your PR into smaller, focused changes
 - Or increase `MAX_DIFF_SIZE` in the workflow file
-- Default limit is 800KB (~200K tokens)
+- The workflow's default limit is 800KB (~200K tokens); the script's own default is 5MB
 
 ## Security Considerations
 
