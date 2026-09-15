@@ -244,6 +244,10 @@ else:
             environment = {
                 "PATH": f"{path}{os.pathsep}{os.defpath}",
                 "FIXTURE_DIR": str(path),
+                # The script's retry backoff uses the no-colon default form
+                # (${VAR-2}) so it stays out of the knob-forwarding scan;
+                # tests run it at zero.
+                "RETRY_SLEEP_SECONDS": "0",
                 "OPENROUTER_API_KEY": "fake-openrouter-key",
                 "GITHUB_TOKEN": "fake-github-token",
                 "PR_NUMBER": "123",
