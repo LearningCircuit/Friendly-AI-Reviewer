@@ -9,10 +9,16 @@ set -e
 REVIEW_HEADER="## AI Code Review"
 REVIEW_FOOTER="---\n*Review by [Friendly AI Reviewer](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - made with ❤️*"
 
-# Helper function to generate error response JSON
+# Helper function to generate error response JSON. Built with jq so a
+# message containing quotes (provider payloads routinely embed JSON) cannot
+# break the output.
 generate_error_response() {
     local error_msg="$1"
-    echo "{\"review\":\"$REVIEW_HEADER\n\n❌ **Error**: $error_msg\n\n$REVIEW_FOOTER\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
+    jq -n --arg review "$REVIEW_HEADER
+
+❌ **Error**: $error_msg
+
+$REVIEW_FOOTER" '{review: $review, fail_pass_workflow: "uncertain", labels_added: []}'
 }
 
 # Get API key from environment variable
@@ -93,8 +99,10 @@ fi
 # Additional review instructions from the repository configuration, applied
 # on top of the standard review contract: inline text via CUSTOM_PROMPT
 # and/or a file via CUSTOM_PROMPT_FILE (its content is appended after the
-# inline text). In the workflow the file is read from the checked-out base
-# branch, so committing it to the repo keeps it trusted content.
+# inline text). The file is read from whatever the workflow checks out —
+# this repo's own workflow uses the PR merge ref (PR-author-controlled);
+# pull_request_target consumers with a base-branch checkout (like
+# local-deep-research) get trusted base content.
 CUSTOM_PROMPT="${CUSTOM_PROMPT:-}"
 CUSTOM_PROMPT_FILE="${CUSTOM_PROMPT_FILE:-}"
 
@@ -571,6 +579,11 @@ ${FILE_INSTRUCTIONS}"
         echo "⚠️  CUSTOM_PROMPT_FILE not readable: $CUSTOM_PROMPT_FILE; continuing without it" >&2
     fi
 fi
+# A whitespace-only value would emit the section header with no rules
+# behind it — gate on visible content.
+if [ -z "$(printf '%s' "$ADDITIONAL_INSTRUCTIONS" | tr -d '[:space:]')" ]; then
+    ADDITIONAL_INSTRUCTIONS=""
+fi
 if [ -n "$ADDITIONAL_INSTRUCTIONS" ]; then
     ADDITIONAL_FULL="$ADDITIONAL_INSTRUCTIONS"
     ADDITIONAL_INSTRUCTIONS=$(printf '%s' "$ADDITIONAL_FULL" | head -c 8000 | strip_partial_utf8)
@@ -702,14 +715,20 @@ JSON_PAYLOAD=$(jq -n \
 REFERER_URL="https://github.com/${REPO_FULL_NAME:-unknown/repo}"
 
 call_model_api() {
-    echo "$JSON_PAYLOAD" | curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
+    # Timeouts matter: a black-holed connection produces neither output nor
+    # a non-zero exit until killed, bypassing the retry logic entirely.
+    # max-time is generous because reasoning models legitimately take 10+
+    # minutes on large reviews (observed in production runs).
+    echo "$JSON_PAYLOAD" | curl -s --connect-timeout 15 --max-time 1500 -X POST "https://openrouter.ai/api/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $API_KEY" \
         -H "HTTP-Referer: $REFERER_URL" \
         --data-binary @-
 }
 
-RESPONSE=$(call_model_api)
+# Neutralize curl's exit status: under set -e a network failure (exit 6/7/28)
+# would otherwise kill the script before the retry below can run.
+RESPONSE=$(call_model_api) || RESPONSE=""
 
 # OpenRouter routes among providers, and a provider can fail a request
 # transiently — that error arrives NESTED inside choices[0].error rather
@@ -728,7 +747,7 @@ if [ -z "$RESPONSE" ] || is_model_error "$RESPONSE"; then
         echo "$RESPONSE" | jq -r '"  first attempt error: \(.choices[0].error.message // .error.message // "no message")"' >&2
     fi
     sleep 2
-    RETRY_RESPONSE=$(call_model_api)
+    RETRY_RESPONSE=$(call_model_api) || RETRY_RESPONSE=""
     if [ -n "$RETRY_RESPONSE" ] && ! is_model_error "$RETRY_RESPONSE"; then
         RESPONSE="$RETRY_RESPONSE"
     else
@@ -798,18 +817,27 @@ if [ -z "$CONTENT" ] || [ "$CONTENT" = "error" ]; then
     ERROR_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].error.code // .error.code // ""')
 
     # Return error as JSON, always carrying finish_reason so an empty
-    # completion is diagnosable from the posted error alone.
+    # completion is diagnosable from the posted error alone. Assembled with
+    # jq so embedded quotes in the provider message cannot break the JSON.
     if [ -n "$FINISH_REASON" ]; then
-        ERROR_CONTENT="$REVIEW_HEADER\n\n❌ **Error**: $ERROR_MSG (finish_reason: $FINISH_REASON)"
+        ERROR_CONTENT="$REVIEW_HEADER
+
+❌ **Error**: $ERROR_MSG (finish_reason: $FINISH_REASON)"
     else
-        ERROR_CONTENT="$REVIEW_HEADER\n\n❌ **Error**: $ERROR_MSG (finish_reason: none)"
+        ERROR_CONTENT="$REVIEW_HEADER
+
+❌ **Error**: $ERROR_MSG (finish_reason: none)"
     fi
     if [ -n "$ERROR_CODE" ]; then
-        ERROR_CONTENT="$ERROR_CONTENT\n\nError code: \`$ERROR_CODE\`"
-    fi
-    ERROR_CONTENT="$ERROR_CONTENT\n\n$REVIEW_FOOTER"
+        ERROR_CONTENT="$ERROR_CONTENT
 
-    echo "{\"review\":\"$ERROR_CONTENT\",\"fail_pass_workflow\":\"uncertain\",\"labels_added\":[]}"
+Error code: \`$ERROR_CODE\`"
+    fi
+    ERROR_CONTENT="$ERROR_CONTENT
+
+$REVIEW_FOOTER"
+    jq -n --arg review "$ERROR_CONTENT" \
+        '{review: $review, fail_pass_workflow: "uncertain", labels_added: []}'
 
     # Don't log full response as it may contain sensitive API data
     # Only log error code for debugging

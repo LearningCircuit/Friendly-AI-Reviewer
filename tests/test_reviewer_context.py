@@ -69,6 +69,7 @@ class ReviewerRequestTests(unittest.TestCase):
         expect_truncation=False,
         retry_empty=False,
         empty_first=False,
+        error_message=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -197,9 +198,10 @@ counter.write_text(str(calls))
 if calls == 1 and (path / "model-error-first.json").exists():
     print((path / "model-error-first.json").read_text())
 elif calls == 1 and (path / "empty-first").exists():
-    pass
+    # A network blip: curl -s prints nothing and exits non-zero (e.g. 6).
+    raise SystemExit(6)
 elif calls >= 2 and (path / "retry-empty").exists():
-    pass
+    raise SystemExit(6)
 else:
     print((path / "response.json").read_text())
 ''',
@@ -244,9 +246,11 @@ else:
                 self.assertIn("max_tokens=", result.stdout)
             elif expect_model_error:
                 # The script reports nested provider errors as an error
-                # review JSON and exits non-zero after its retry.
+                # review JSON and exits non-zero after its retry; the output
+                # must still be valid JSON.
                 self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertIn("provider exploded", result.stdout)
+                self.assertIn(error_message or "provider exploded", result.stdout)
+                json.loads(result.stdout)
             else:
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), expected)
@@ -759,6 +763,32 @@ else:
         )
         prompt = request["messages"][0]["content"]
         self.assertIn("[…truncated at 8000 bytes]", prompt)
+        # Pin the cap itself, not just the marker: a regressed head -c
+        # would keep the marker (independent wc check) while shipping
+        # uncapped bytes.
+        self.assertNotIn("z" * 8001, prompt)
+
+    def test_whitespace_only_custom_prompt_is_ignored(self):
+        request = self.run_reviewer(
+            previous=False, human=False,
+            config={"CUSTOM_PROMPT": "   \n\t  "},
+        )
+        prompt = request["messages"][0]["content"]
+        self.assertNotIn("Additional Review Instructions", prompt)
+
+    def test_provider_error_with_embedded_json_stays_valid_json(self):
+        # Provider messages routinely embed upstream JSON; the error review
+        # must still parse.
+        self.run_reviewer(
+            previous=False, human=False,
+            model_error_first={
+                "code": 500,
+                "message": 'Provider returned error 500: {"code": 500, "status": "server_error"}',
+            },
+            retry_empty=True,
+            expect_model_error=True,
+            error_message="Provider returned error 500",
+        )
 
     def test_transient_provider_error_is_retried_once(self):
         # rc 0 + the clean-review round-trip (asserted by the harness) prove
