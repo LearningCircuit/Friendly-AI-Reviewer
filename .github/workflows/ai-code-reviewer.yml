@@ -9,9 +9,10 @@ jobs:
     name: AI Code Review
     runs-on: ubuntu-latest
     # Bound the job: the model call is capped at 25 minutes by curl's
-    # --max-time; without this a wedge elsewhere would hang for the
-    # 6-hour default.
-    timeout-minutes: 35
+    # --max-time, and the retry adds a second full attempt — the worst case
+    # is ~50 minutes plus overhead, so 60 keeps the bound above every
+    # legitimate path while still far under the 6-hour default.
+    timeout-minutes: 60
     if: github.event.action == 'labeled' && github.event.label.name == 'ai_code_review'
     permissions:
       contents: read

@@ -148,6 +148,12 @@ class ReviewerRequestTests(unittest.TestCase):
                         "finish_reason": "error",
                     }],
                 }))
+            if garbage_first or empty_first or (model_error_first is not None):
+                modes = sum([
+                    bool(garbage_first), bool(empty_first),
+                    model_error_first is not None,
+                ])
+                assert modes <= 1, "first-failure fixtures are mutually exclusive"
             if garbage_first:
                 (path / "garbage-first").write_text("")
             if retry_garbage:
