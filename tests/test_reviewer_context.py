@@ -712,6 +712,8 @@ else:
         self.assertIn("[…truncated at 10000 bytes]", prompt)
         self.assertIn("😀", prompt)
         self.assertNotIn("\ufffd", prompt)
+        # Pin the cap: the r-run cannot survive 10000 bytes whole.
+        self.assertNotIn("r" * 9950, prompt)
 
     def test_per_comment_clip_slices_by_character_not_byte(self):
         # jq slices by codepoints: a mixed multibyte body clips at a
@@ -928,6 +930,7 @@ else:
         prompt = request["messages"][0]["content"]
         self.assertIn("**PR Title**: A change", prompt)
         self.assertIn("[…truncated at 2000 bytes]", prompt)
+        self.assertNotIn("d" * 2000, prompt)
 
     def test_pr_object_fetched_once_for_description_and_check_runs(self):
         request = self.run_reviewer(
@@ -1014,6 +1017,8 @@ else:
         )
         prompt = request["messages"][0]["content"]
         self.assertIn("[…truncated at 2500 bytes]", prompt)
+        # Pin the cap itself, not just the marker.
+        self.assertNotIn("m" * 2501, prompt)
 
     def test_check_run_summary_spans_all_pages(self):
         request = self.run_reviewer(

@@ -20,6 +20,7 @@ This guide explains how to set up the automated AI PR review system using OpenRo
 - **Thinking Model Support**: Now supports advanced reasoning models like Kimi K2 that use `<thinking>` tags
 - **Rich Context**: Includes PR descriptions, commit messages, and human comments for comprehensive reviews
 - **Commit Overview**: Tells the model how many commits are already on a PR, who authored them, and how many lines each author changed — with caps configured separately from the (token-heavy) fully quoted messages
+- **Repository Instructions**: `CUSTOM_PROMPT` / `CUSTOM_PROMPT_FILE` add house rules on top of the standard contract; findings are split into **New problems** (severity-tagged, actionable) and **Pre-existing problems** (documentation and issue extraction only, never blocking)
 - **Higher Token Limits**: Default 64k tokens for complete reviews without truncation
 - **Smart Context Management**: Only fetches most recent AI review to save tokens
 - **Enhanced Error Handling**: Robust parsing of various AI response formats
@@ -77,7 +78,7 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
 - **MAX_COMMIT_MESSAGES**: How many commit messages are fully quoted in the prompt (default: `3`). Fully quoted messages are the token-expensive part of the commit history, hence the separate, smaller cap — the overview (above) still covers many more commits.
 - **INCLUDE_COMMIT_SUMMARY**: Include the "There are X commits already on this PR" overview with per-author counts and line totals (default: `true`)
 - **MAX_HUMAN_COMMENTS**: How many of the newest human comments are included (default: `100`; `0` includes none at all). Comments are presented newest-first, so when this or the overall budget clips, the oldest go first — the latest feedback always survives.
-- **MAX_HUMAN_COMMENT_LENGTH**: Maximum characters per human comment; longer comments are clipped and marked " […truncated]" (default: `4000`)
+- **MAX_HUMAN_COMMENT_LENGTH**: Maximum characters per human comment; longer comments are clipped and marked " […truncated]" (default: `4000`; `0` reduces every comment to its author header and the truncation marker)
 - **MAX_HUMAN_COMMENTS_TOTAL**: Overall byte budget for the human-comments block (`head -c`); when exceeded, the block is cut and marked (default: `20000`; `0` omits the block entirely)
 - **CUSTOM_PROMPT**: Additional review instructions appended on top of the standard review contract — house rules, focus areas, conventions (default: empty). Combined with `CUSTOM_PROMPT_FILE`, the inline text comes first. Capped at 8000 bytes, marked when truncated.
 - **CUSTOM_PROMPT_FILE**: Path to a file with additional review instructions (default: empty). The file is read from whatever the workflow checks out: in this repository's own workflow that is the PR merge ref, so a PR author can override the instructions for their own review; consumers using `pull_request_target` with a base-branch checkout (like local-deep-research) get the stronger property that the file is trusted base content. Point the `CUSTOM_PROMPT_FILE` repository variable at a committed file (e.g. `.github/ai-review-instructions.md`). An unreadable path warns in the logs and is skipped.
