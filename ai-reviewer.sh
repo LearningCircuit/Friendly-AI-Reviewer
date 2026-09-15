@@ -490,12 +490,10 @@ echo "$DIFF_CONTENT" > "$DIFF_FILE" || { echo "Failed to write diff to temporary
 # Set up trap to ensure temp file cleanup on exit/error
 trap 'rm -f "$DIFF_FILE"' EXIT
 
-# Build the user prompt using the diff file
-PROMPT_PREFIX="Review this code diff thoroughly and report only actionable findings in markdown format.
-
-Focus on security, performance, code quality, and best practices.
-
-Keep the review scannable: new problems first (must fix, then should fix, then nits), then pre-existing problems as documentation.
+# Build the user prompt using the diff file. Only the reading order lives
+# here — the focus areas and review contract are stated once, in the main
+# PROMPT; duplicating them here burned tokens on every request.
+PROMPT_PREFIX="Keep the review scannable: new problems first (must fix, then should fix, then nits), then pre-existing problems as documentation.
 "
 
 # Add GitHub Actions check status if available
@@ -568,7 +566,9 @@ if [ -n "$CUSTOM_PROMPT" ]; then
 fi
 if [ -n "$CUSTOM_PROMPT_FILE" ]; then
     if [ -f "$CUSTOM_PROMPT_FILE" ] && [ -r "$CUSTOM_PROMPT_FILE" ]; then
-        FILE_INSTRUCTIONS=$(cat "$CUSTOM_PROMPT_FILE" 2>/dev/null || echo "")
+        # Strip carriage returns so CRLF-checked-in files do not litter
+        # the prompt with bare \r.
+        FILE_INSTRUCTIONS=$(tr -d '\r' < "$CUSTOM_PROMPT_FILE" 2>/dev/null || echo "")
         if [ -n "$FILE_INSTRUCTIONS" ]; then
             if [ -n "$ADDITIONAL_INSTRUCTIONS" ]; then
                 ADDITIONAL_INSTRUCTIONS="${ADDITIONAL_INSTRUCTIONS}

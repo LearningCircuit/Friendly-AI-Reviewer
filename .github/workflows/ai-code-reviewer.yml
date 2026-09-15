@@ -8,6 +8,10 @@ jobs:
   comprehensive-review:
     name: AI Code Review
     runs-on: ubuntu-latest
+    # Bound the job: the model call is capped at 25 minutes by curl's
+    # --max-time; without this a wedge elsewhere would hang for the
+    # 6-hour default.
+    timeout-minutes: 35
     if: github.event.action == 'labeled' && github.event.label.name == 'ai_code_review'
     permissions:
       contents: read
@@ -15,7 +19,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (SHA-pinned: tags can be moved)
         with:
           fetch-depth: 0
 
