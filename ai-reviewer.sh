@@ -771,7 +771,10 @@ if is_unusable_response "$RESPONSE"; then
     if is_model_error "$RESPONSE"; then
         echo "$RESPONSE" | jq -r '"  first attempt error: \(.choices[0].error.message // .error.message // "no message")"' >&2
     fi
-    sleep "${RETRY_SLEEP_SECONDS-2}"
+    # No-colon default keeps this out of the knob-forwarding scan; the -gt
+    # guard makes an empty or non-numeric value skip the sleep instead of
+    # erroring mid-retry.
+    [ "${RETRY_SLEEP_SECONDS-2}" -gt 0 ] 2>/dev/null && sleep "${RETRY_SLEEP_SECONDS-2}"
     RETRY_RESPONSE=$(call_model_api) || RETRY_RESPONSE=""
     # Accept the retry only when it produced parseable JSON, and either it
     # is clean or the first response was content-free (an error diagnostic

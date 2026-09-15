@@ -73,7 +73,7 @@ The workflow is pre-configured with sensible defaults, but you can customize it 
   - High limit ensures comprehensive reviews without truncation
   - For large PRs with thinking models, this prevents cut-off responses
   - Adjust lower for cost savings on smaller PRs
-- **MAX_DIFF_SIZE**: Maximum diff size in bytes (default: `800000` / 800KB)
+- **MAX_DIFF_SIZE**: Maximum diff size in bytes (the script's built-in default is `5000000` / 5MB; this repository's workflow passes `800000` / 800KB as its default — the README reflects the workflow value you actually run with)
 - **MAX_SUMMARY_COMMITS**: How many of the PR's most recent commits the commit overview reads (default: `15`; `0` shows the commit count only). The overview tells the model how many commits are already on the PR, who made them, and each author's added/removed line totals. Each summarized commit costs one extra GitHub API call, but only a handful of numbers enter the prompt, so this cap can stay generous.
 - **MAX_COMMIT_MESSAGES**: How many commit messages are fully quoted in the prompt (default: `3`). Fully quoted messages are the token-expensive part of the commit history, hence the separate, smaller cap — the overview (above) still covers many more commits.
 - **INCLUDE_COMMIT_SUMMARY**: Include the "There are X commits already on this PR" overview with per-author counts and line totals (default: `true`)
@@ -174,7 +174,7 @@ You can adjust these to match your team's priorities.
 If you get a "Diff is too large" error:
 - Split your PR into smaller, focused changes
 - Or increase `MAX_DIFF_SIZE` in the workflow file
-- Default limit is 800KB (~200K tokens)
+- The workflow's default limit is 800KB (~200K tokens); the script's own default is 5MB
 
 ## Security Considerations
 
