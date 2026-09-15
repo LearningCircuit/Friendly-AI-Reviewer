@@ -7,7 +7,10 @@ set -e
 
 # Constants
 REVIEW_HEADER="## AI Code Review"
-REVIEW_FOOTER="---\n*Review by [Friendly AI Reviewer](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - made with ❤️*"
+# A real two-line string: consumed via jq --arg in error responses, where a
+# literal backslash-n would survive parsing as two characters instead of a
+# newline and visibly break the posted footer.
+REVIEW_FOOTER=$'---\n*Review by [Friendly AI Reviewer](https://github.com/LearningCircuit/Friendly-AI-Reviewer) - made with ❤️*'
 
 # Helper function to generate error response JSON. Built with jq so a
 # message containing quotes (provider payloads routinely embed JSON) cannot
@@ -748,10 +751,13 @@ if [ -z "$RESPONSE" ] || is_model_error "$RESPONSE"; then
     fi
     sleep 2
     RETRY_RESPONSE=$(call_model_api) || RETRY_RESPONSE=""
-    if [ -n "$RETRY_RESPONSE" ] && ! is_model_error "$RETRY_RESPONSE"; then
+    if [ -n "$RETRY_RESPONSE" ] && { [ -z "$RESPONSE" ] || ! is_model_error "$RETRY_RESPONSE"; }; then
         RESPONSE="$RETRY_RESPONSE"
     else
         echo "⚠️  Retry failed as well; reporting the first attempt's result" >&2
+        if is_model_error "$RETRY_RESPONSE"; then
+            echo "$RETRY_RESPONSE" | jq -r '"  retry error: \(.choices[0].error.message // .error.message // "no message")"' >&2
+        fi
     fi
 fi
 
@@ -783,8 +789,8 @@ if [ "$DEBUG_MODE" = "true" ]; then
     echo "=== END API STRUCTURE DEBUG ===" >&2
 fi
 
-# Extract the content; an absent content yields "" (an explicit sentinel
-# would collide with models that literally return the word "error")
+# Extract the content; jq's // "" covers absence (a literal "error" string
+# is legitimate model output and flows to JSON validation below).
 CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // ""')
 
 # Capture finish_reason so a truncated completion can be reported distinctly
@@ -810,10 +816,13 @@ if [ "$FINISH_REASON" = "length" ]; then
     exit 0
 fi
 
-if [ -z "$CONTENT" ] || [ "$CONTENT" = "error" ]; then
-    # Try to extract error details — OpenRouter nests provider errors in
-    # choices[0].error; top-level .error carries request/routing errors.
-    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].error.message // .error.message // "Model returned no content"')
+# A failed request (error object on the response) is a hard failure: the
+# workflow posts nothing and the trigger label stays — re-trigger after
+# fixing the cause.
+if is_model_error "$RESPONSE"; then
+    # OpenRouter nests provider errors in choices[0].error; top-level
+    # .error carries request/routing errors.
+    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.choices[0].error.message // .error.message // "Model request failed"')
     ERROR_CODE=$(echo "$RESPONSE" | jq -r '.choices[0].error.code // .error.code // ""')
 
     # Return error as JSON, always carrying finish_reason so an empty
@@ -845,6 +854,18 @@ $REVIEW_FOOTER"
         echo "API Error code: $ERROR_CODE" >&2
     fi
     exit 1
+fi
+
+# An empty completion on a successful response is a provider quirk: post
+# the error review as a comment (exit 0) like the truncation path, so the
+# workflow cleans up its trigger label instead of wedging it.
+if [ -z "$CONTENT" ]; then
+    if [ -n "$FINISH_REASON" ]; then
+        generate_error_response "AI returned empty response (finish_reason: $FINISH_REASON)"
+    else
+        generate_error_response "AI returned empty response (finish_reason: none)"
+    fi
+    exit 0
 fi
 
 # Remove thinking tags and content - everything between <thinking> and </thinking>

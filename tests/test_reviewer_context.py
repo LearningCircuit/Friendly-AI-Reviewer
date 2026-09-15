@@ -70,6 +70,8 @@ class ReviewerRequestTests(unittest.TestCase):
         retry_empty=False,
         empty_first=False,
         error_message=None,
+        retry_error=None,
+        empty_content=False,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -109,6 +111,13 @@ class ReviewerRequestTests(unittest.TestCase):
                         "finish_reason": finish_reason or "length",
                     }],
                 }
+            elif empty_content:
+                response_document = {
+                    "choices": [{
+                        "message": {"content": ""},
+                        "finish_reason": "stop",
+                    }],
+                }
             else:
                 response_document = {
                     "choices": [{
@@ -129,6 +138,14 @@ class ReviewerRequestTests(unittest.TestCase):
                 (path / "retry-empty").write_text("")
             if empty_first:
                 (path / "empty-first").write_text("")
+            if retry_error is not None:
+                (path / "retry-error.json").write_text(json.dumps({
+                    "choices": [{
+                        "message": {},
+                        "error": retry_error,
+                        "finish_reason": "error",
+                    }],
+                }))
             stubs = {
                 "gh": '''import json, os, subprocess, sys
 from pathlib import Path
@@ -202,6 +219,8 @@ elif calls == 1 and (path / "empty-first").exists():
     raise SystemExit(6)
 elif calls >= 2 and (path / "retry-empty").exists():
     raise SystemExit(6)
+elif calls >= 2 and (path / "retry-error.json").exists():
+    print((path / "retry-error.json").read_text())
 else:
     print((path / "response.json").read_text())
 ''',
@@ -247,10 +266,18 @@ else:
             elif expect_model_error:
                 # The script reports nested provider errors as an error
                 # review JSON and exits non-zero after its retry; the output
-                # must still be valid JSON.
+                # must still be valid JSON with an intact footer.
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn(error_message or "provider exploded", result.stdout)
-                json.loads(result.stdout)
+                posted = json.loads(result.stdout)
+                self.assertIn(FOOTER, posted["review"])
+            elif empty_content:
+                # An empty completion on a 200 is posted as an error review
+                # (exit 0), so the workflow still cleans up its label.
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("AI returned empty response", result.stdout)
+                posted = json.loads(result.stdout)
+                self.assertIn(FOOTER, posted["review"])
             else:
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), expected)
@@ -815,6 +842,23 @@ else:
             model_error_first={"code": 502, "message": "provider exploded"},
             expect_model_error=True,
             retry_empty=True,
+        )
+
+    def test_empty_first_then_provider_error_reports_provider(self):
+        # Network blip, then the retry reaches a failing provider: the
+        # retry's diagnostic must win over the content-free first response.
+        self.run_reviewer(
+            previous=False, human=False,
+            empty_first=True,
+            retry_error={"code": 502, "message": "provider exploded on retry"},
+            expect_model_error=True,
+            error_message="provider exploded on retry",
+        )
+
+    def test_empty_completion_posts_error_review(self):
+        self.run_reviewer(
+            previous=False, human=False,
+            empty_content=True,
         )
 
     def test_persistent_provider_error_message_is_surfaced(self):
