@@ -618,7 +618,7 @@ Review Structure:
 2. Section \"New problems\" (introduced by this PR): bullet points tagged \"must fix\", \"should fix\", or \"nit\", in that order; preserve enough detail to understand and fix each issue, and highlight inferences with the explicit \"Inference (not verified):\" label
 3. Section \"Pre-existing problems\" (predating this PR): one bullet per problem with its location and a one-line description, so they can be extracted and filed as issues later; omit the section only when none exist. Never suggest fixing them in this PR.
 4. If specific things cannot be verified from the diff and are worth a human check, list them in a final \"Should be checked\" section before the verdict; omit the section entirely when there is nothing meaningful to check
-5. If there are no actionable findings and nothing to check, write only \"No actionable findings.\" before the verdict; do not add a summary or empty security section
+5. If there are no NEW problems and nothing to check, write \"No actionable findings.\" before the verdict — a non-empty \"Pre-existing problems\" section still appears alongside it; do not add a summary or empty security section
 6. End with one of these verdicts ONLY, based solely on NEW problems:
    - \"✅ Approved\" (no issues found)
    - \"✅ Approved with recommendations\" (minor improvements suggested, but not blocking)
@@ -713,19 +713,26 @@ RESPONSE=$(call_model_api)
 
 # OpenRouter routes among providers, and a provider can fail a request
 # transiently — that error arrives NESTED inside choices[0].error rather
-# than at the top level. Retry once before treating it as a failure; a
-# single immediate retry cannot loop.
+# than at the top level. curl -s without --fail prints nothing on network
+# errors, so an empty response is also a transient failure signature. Retry
+# once with a short backoff, and only accept the retry result when it
+# produced output — otherwise keep the first response so its diagnostic
+# survives into the error path instead of degrading to "empty response".
 is_model_error() {
-    echo "$1" | jq -e '(.choices[0].error != null) or has("error")' >/dev/null 2>&1
+    [ -n "$1" ] && echo "$1" | jq -e '(.choices[0].error != null) or (.error != null)' >/dev/null 2>&1
 }
 
-if is_model_error "$RESPONSE"; then
-    echo "⚠️  Model provider error on first attempt; retrying once" >&2
+if [ -z "$RESPONSE" ] || is_model_error "$RESPONSE"; then
+    echo "⚠️  First model attempt failed (empty or error response); retrying once" >&2
+    if is_model_error "$RESPONSE"; then
+        echo "$RESPONSE" | jq -r '"  first attempt error: \(.choices[0].error.message // .error.message // "no message")"' >&2
+    fi
+    sleep 2
     RETRY_RESPONSE=$(call_model_api)
-    if ! is_model_error "$RETRY_RESPONSE"; then
+    if [ -n "$RETRY_RESPONSE" ] && ! is_model_error "$RETRY_RESPONSE"; then
         RESPONSE="$RETRY_RESPONSE"
     else
-        echo "⚠️  Retry also failed with a model provider error" >&2
+        echo "⚠️  Retry failed as well; reporting the first attempt's result" >&2
     fi
 fi
 

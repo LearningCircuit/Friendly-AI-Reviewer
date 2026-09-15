@@ -67,6 +67,8 @@ class ReviewerRequestTests(unittest.TestCase):
         expect_model_error=False,
         finish_reason=None,
         expect_truncation=False,
+        retry_empty=False,
+        empty_first=False,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -91,22 +93,26 @@ class ReviewerRequestTests(unittest.TestCase):
             ))
             (path / "labels.json").write_text(json.dumps(labels or []))
             expected = response if response is not None else CLEAN_REVIEW
-            response_document = {
-                "choices": [{
-                    "message": {"content": json.dumps(expected)}
-                    if not (expect_model_error or expect_truncation)
-                    else {},
-                    "finish_reason": finish_reason
-                    or ("error" if expect_model_error else "length"
-                        if expect_truncation else "stop"),
-                }],
-            }
             if expect_model_error:
                 response_document = {
                     "choices": [{
                         "message": {},
                         "error": {"code": 502, "message": "provider exploded"},
                         "finish_reason": "error",
+                    }],
+                }
+            elif expect_truncation:
+                response_document = {
+                    "choices": [{
+                        "message": {},
+                        "finish_reason": finish_reason or "length",
+                    }],
+                }
+            else:
+                response_document = {
+                    "choices": [{
+                        "message": {"content": json.dumps(expected)},
+                        "finish_reason": finish_reason or "stop",
                     }],
                 }
             (path / "response.json").write_text(json.dumps(response_document))
@@ -118,6 +124,10 @@ class ReviewerRequestTests(unittest.TestCase):
                         "finish_reason": "error",
                     }],
                 }))
+            if retry_empty:
+                (path / "retry-empty").write_text("")
+            if empty_first:
+                (path / "empty-first").write_text("")
             stubs = {
                 "gh": '''import json, os, subprocess, sys
 from pathlib import Path
@@ -180,10 +190,16 @@ path = Path(os.environ["FIXTURE_DIR"])
 counter = path / "curl-calls"
 calls = int(counter.read_text()) + 1 if counter.exists() else 1
 counter.write_text(str(calls))
-# An error-first fixture models a transient OpenRouter provider failure
-# (nested in choices[0].error): the first call fails, the retry succeeds.
+# Failure fixtures, in order: an error-first response models a transient
+# OpenRouter provider failure (nested in choices[0].error); an empty-first
+# response models a network blip (curl -s prints nothing); retry-empty
+# makes every attempt after the first return nothing.
 if calls == 1 and (path / "model-error-first.json").exists():
     print((path / "model-error-first.json").read_text())
+elif calls == 1 and (path / "empty-first").exists():
+    pass
+elif calls >= 2 and (path / "retry-empty").exists():
+    pass
 else:
     print((path / "response.json").read_text())
 ''',
@@ -296,7 +312,9 @@ else:
         self.assertIn('Section "Pre-existing problems"', prompt)
         self.assertIn("based solely on NEW problems", prompt)
         self.assertIn("file and line location, concrete failure scenario, impact", prompt)
-        self.assertIn('write only "No actionable findings." before the verdict', prompt)
+        self.assertIn('write "No actionable findings." before the verdict', prompt)
+        self.assertIn('non-empty "Pre-existing problems" section still appears', prompt)
+        self.assertNotIn('write only "No actionable findings."', prompt)
         self.assertNotIn("Always include a", prompt)
         self.assertNotIn("short overall feedback summary", prompt)
         self.assertIn(HEADER, prompt)
@@ -751,6 +769,23 @@ else:
         )
         calls = self.curl_calls
         self.assertEqual(calls, 2)
+
+    def test_network_blip_empty_response_is_retried(self):
+        # curl -s prints nothing on network errors: the empty first response
+        # must trigger the retry, which then succeeds.
+        self.run_reviewer(previous=False, human=False, empty_first=True)
+        self.assertEqual(self.curl_calls, 2)
+
+    def test_failed_retry_preserves_first_error_diagnostic(self):
+        # Attempt one carries a diagnosable provider error, the retry dies
+        # at the network level: the first response must survive so the
+        # error path reports "provider exploded", not an empty response.
+        self.run_reviewer(
+            previous=False, human=False,
+            model_error_first={"code": 502, "message": "provider exploded"},
+            expect_model_error=True,
+            retry_empty=True,
+        )
 
     def test_persistent_provider_error_message_is_surfaced(self):
         self.run_reviewer(
