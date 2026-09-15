@@ -72,6 +72,8 @@ class ReviewerRequestTests(unittest.TestCase):
         error_message=None,
         retry_error=None,
         empty_content=False,
+        garbage_first=False,
+        retry_garbage=False,
     ):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -146,6 +148,10 @@ class ReviewerRequestTests(unittest.TestCase):
                         "finish_reason": "error",
                     }],
                 }))
+            if garbage_first:
+                (path / "garbage-first").write_text("")
+            if retry_garbage:
+                (path / "retry-garbage").write_text("")
             stubs = {
                 "gh": '''import json, os, subprocess, sys
 from pathlib import Path
@@ -217,8 +223,13 @@ if calls == 1 and (path / "model-error-first.json").exists():
 elif calls == 1 and (path / "empty-first").exists():
     # A network blip: curl -s prints nothing and exits non-zero (e.g. 6).
     raise SystemExit(6)
+elif calls == 1 and (path / "garbage-first").exists():
+    # A proxy error page: valid HTTP, unparseable JSON, curl exit 0.
+    sys.stdout.write("<html>502 Bad Gateway</html>")
 elif calls >= 2 and (path / "retry-empty").exists():
     raise SystemExit(6)
+elif calls >= 2 and (path / "retry-garbage").exists():
+    sys.stdout.write("<html>503 Service Unavailable</html>")
 elif calls >= 2 and (path / "retry-error.json").exists():
     print((path / "retry-error.json").read_text())
 else:
@@ -859,6 +870,23 @@ else:
         self.run_reviewer(
             previous=False, human=False,
             empty_content=True,
+        )
+
+    def test_unparseable_proxy_page_is_retried(self):
+        # A proxy's HTML 502 page arrives as valid HTTP with curl exit 0:
+        # it is a transient failure of the same class and must be retried,
+        # with the retry's clean review accepted.
+        self.run_reviewer(previous=False, human=False, garbage_first=True)
+        self.assertEqual(self.curl_calls, 2)
+
+    def test_provider_error_preferred_over_garbage_retry(self):
+        # First attempt carries a diagnosable provider error, the retry
+        # returns an unparseable page: the diagnostic must survive.
+        self.run_reviewer(
+            previous=False, human=False,
+            model_error_first={"code": 502, "message": "provider exploded"},
+            retry_garbage=True,
+            expect_model_error=True,
         )
 
     def test_persistent_provider_error_message_is_surfaced(self):

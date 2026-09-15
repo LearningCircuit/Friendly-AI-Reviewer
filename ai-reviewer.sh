@@ -740,18 +740,33 @@ RESPONSE=$(call_model_api) || RESPONSE=""
 # once with a short backoff, and only accept the retry result when it
 # produced output — otherwise keep the first response so its diagnostic
 # survives into the error path instead of degrading to "empty response".
+# A response is unusable when it is empty (network failure), carries a
+# model error object, or is not valid JSON at all (e.g. a proxy's HTML
+# error page — curl -s without --fail passes error bodies through).
 is_model_error() {
     [ -n "$1" ] && echo "$1" | jq -e '(.choices[0].error != null) or (.error != null)' >/dev/null 2>&1
 }
 
-if [ -z "$RESPONSE" ] || is_model_error "$RESPONSE"; then
-    echo "⚠️  First model attempt failed (empty or error response); retrying once" >&2
+is_unusable_response() {
+    [ -z "$1" ] && return 0
+    is_model_error "$1" && return 0
+    ! echo "$1" | jq -e . >/dev/null 2>&1
+}
+
+if is_unusable_response "$RESPONSE"; then
+    echo "⚠️  First model attempt failed (empty, error, or unparseable response); retrying once" >&2
     if is_model_error "$RESPONSE"; then
         echo "$RESPONSE" | jq -r '"  first attempt error: \(.choices[0].error.message // .error.message // "no message")"' >&2
     fi
     sleep 2
     RETRY_RESPONSE=$(call_model_api) || RETRY_RESPONSE=""
-    if [ -n "$RETRY_RESPONSE" ] && { [ -z "$RESPONSE" ] || ! is_model_error "$RETRY_RESPONSE"; }; then
+    # Accept the retry only when it produced parseable JSON, and either it
+    # is clean or the first response was content-free (an error diagnostic
+    # beats an empty string; conversely a content-full first response is
+    # kept when the retry is itself an error or garbage).
+    if [ -n "$RETRY_RESPONSE" ] \
+        && echo "$RETRY_RESPONSE" | jq -e . >/dev/null 2>&1 \
+        && { ! is_model_error "$RETRY_RESPONSE" || [ -z "$RESPONSE" ]; }; then
         RESPONSE="$RETRY_RESPONSE"
     else
         echo "⚠️  Retry failed as well; reporting the first attempt's result" >&2
